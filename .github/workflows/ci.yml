@@ -13,7 +13,11 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          # Pinned to the version this was verified against. `allowBuilds:` in
+          # pnpm-workspace.yaml is a pnpm 10+ setting that moved out of
+          # package.json; an older pnpm silently skips esbuild's postinstall
+          # and the build then fails.
+          version: 11.5.1
 
       - uses: actions/setup-node@v4
         with:

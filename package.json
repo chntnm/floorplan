@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "Spatial planning for real rooms — import a floor plan, build an inventory, place it in 3D, and walk through it.",
   "type": "module",
-  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "vite",
