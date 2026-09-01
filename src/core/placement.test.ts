@@ -109,6 +109,63 @@ describe('worldOutline', () => {
     expect(polyArea(flipped)).toBeCloseTo(polyArea(normal), 6);
     expect(flipped.pts).not.toEqual(normal.pts);
   });
+
+  it('mirrors in local space *before* rotating', () => {
+    // Mirror-then-rotate ≠ rotate-then-mirror at any angle that is not a multiple
+    // of 180°. Flipping an already-rotated sofa must mirror it about its own axis,
+    // not about the world axis — this pins the order so phase 2's transform
+    // handles cannot silently adopt the other one.
+    const l = item({
+      id: 'sectional',
+      footprint: {
+        generator: { kind: 'lshape', w: 2400, d: 2000, cutW: 900, cutD: 800, corner: 'ne' },
+        outline: polygon([
+          { x: -1200, y: -1000 },
+          { x: -1200, y: 1000 },
+          { x: 1200, y: 1000 },
+          { x: 1200, y: -200 },
+          { x: 300, y: -200 },
+          { x: 300, y: -1000 },
+        ]),
+      },
+    });
+
+    const flippedAt45 = worldOutline(
+      place({ id: 'p', itemId: 'sectional', rotation: 45, flipped: true }),
+      l,
+    );
+
+    // Rotate-then-mirror: mirror the world outline of the unflipped placement.
+    const unflippedAt45 = worldOutline(
+      place({ id: 'p', itemId: 'sectional', rotation: 45 }),
+      l,
+    );
+    const mirroredAfter = unflippedAt45.pts.map((p) => ({ x: -p.x, y: p.y }));
+
+    // The two orders genuinely differ — if they ever stop differing, this test is
+    // no longer pinning anything and the assertion below is meaningless.
+    const sortKey = (p: { x: number; y: number }) => `${p.x},${p.y}`;
+    expect([...flippedAt45.pts].map(sortKey).sort()).not.toEqual(
+      [...mirroredAfter].map(sortKey).sort(),
+    );
+
+    // And local-mirror-then-rotate is what we implement: mirroring the *local*
+    // footprint and then rotating reproduces it exactly.
+    const localMirrored = item({
+      id: 'mirrored',
+      footprint: {
+        generator: l.footprint.generator,
+        outline: polygon(
+          l.footprint.outline.pts.map((p) => ({ x: -p.x, y: p.y })).reverse(),
+        ),
+      },
+    });
+    const expected = worldOutline(
+      place({ id: 'p', itemId: 'mirrored', rotation: 45 }),
+      localMirrored,
+    );
+    expect(flippedAt45.pts).toEqual(expected.pts);
+  });
 });
 
 describe('resolveElevation', () => {

@@ -205,6 +205,18 @@ describe('plain JSON export', () => {
     expect(isAssetFree(fixture())).toBe(false);
   });
 
+  it('refuses to export a document whose assets it cannot carry', () => {
+    // Otherwise the file reopens with a background pointing at an image that
+    // does not exist — and only on the other person's machine.
+    expect(() => writeSpaceJson(fixture())).toThrow(SpaceFileError);
+    expect(() => writeSpaceJson(fixture())).toThrow(/Save it as \.space/);
+  });
+
+  it('allows deliberate model-only export', () => {
+    const json = writeSpaceJson(fixture(), true);
+    expect(readSpaceJson(json).assets).toHaveLength(1);
+  });
+
   it('rejects malformed JSON', () => {
     expect(() => readSpaceJson('{nope')).toThrow(SpaceFileError);
     expect(() => readSpaceJson('[]')).toThrow();

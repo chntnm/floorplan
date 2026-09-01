@@ -125,7 +125,24 @@ export function readSpace(bytes: Uint8Array): SpaceBundle {
 // Plain JSON export (asset-free documents only)
 // ---------------------------------------------------------------------------
 
-export function writeSpaceJson(doc: SpaceDocument): string {
+/**
+ * Export a document as plain JSON.
+ *
+ * Refuses a document that references assets. The JSON carries the asset *manifest*
+ * but not the bytes, so writing one would produce a file that reopens with a
+ * background pointing at an image that does not exist — a silent data loss that
+ * only shows up on the other person's machine. Use `writeSpace` for those.
+ *
+ * `allowAssetLoss` exists for the deliberate case: exporting the model alone for
+ * diffing or version control, knowing the assets stay behind.
+ */
+export function writeSpaceJson(doc: SpaceDocument, allowAssetLoss = false): string {
+  if (!allowAssetLoss && !isAssetFree(doc)) {
+    throw new SpaceFileError(
+      `This space references ${doc.assets.length} asset(s) that plain JSON cannot carry. ` +
+        `Save it as .space instead, or pass allowAssetLoss to export the model alone.`,
+    );
+  }
   return JSON.stringify(doc, null, 2);
 }
 

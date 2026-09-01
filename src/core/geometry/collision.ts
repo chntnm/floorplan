@@ -12,7 +12,7 @@
  */
 
 import polygonClipping from 'polygon-clipping';
-import { area, bounds, boundsOverlap, polygon, type Polygon } from './polygon';
+import { bounds, boundsOverlap, polygon, signedArea, type Polygon } from './polygon';
 
 /** A closed vertical interval in millimetres above the floor datum. */
 export type Span = { bottom: number; top: number };
@@ -67,15 +67,18 @@ export function intersectionArea(a: Polygon, b: Polygon): number {
   if (!boundsOverlap(bounds(a), bounds(b))) return 0;
 
   const result = polygonClipping.intersection([toRing(a)], [toRing(b)]);
+
+  // polygon-clipping returns a MultiPolygon whose rings carry their orientation in
+  // the sign of their area: outer rings positive, holes negative. Summing signed
+  // areas therefore gives the net area directly, without assuming outer-ring-first
+  // ordering. (Verified: a square annulus yields +1,000,000 and −160,000.)
   let total = 0;
   for (const poly of result) {
-    for (let i = 0; i < poly.length; i++) {
-      const ring = poly[i]!;
+    for (const ring of poly) {
       // A ring repeats its first point; drop it, and skip degenerate rings.
       const pts = ring.slice(0, -1).map(([x, y]) => ({ x, y }));
       if (pts.length < 3) continue;
-      // Ring 0 is the outer boundary, the rest are holes.
-      total += i === 0 ? area(polygon(pts)) : -area(polygon(pts));
+      total += signedArea(polygon(pts));
     }
   }
   return total;

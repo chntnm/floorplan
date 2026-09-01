@@ -18,15 +18,6 @@ export function makeFootprint(generator: FootprintGenerator): Footprint {
   return { generator, outline: roundPolygon(generatePolygon(generator)) };
 }
 
-/** Rebuild the cached outline after a generator parameter changes. */
-export function withGenerator(
-  footprint: Footprint,
-  generator: FootprintGenerator,
-): Footprint {
-  void footprint;
-  return makeFootprint(generator);
-}
-
 /** Extent along local x at rotation 0. */
 export function footprintWidth(footprint: Footprint): number {
   return width(footprint.outline);

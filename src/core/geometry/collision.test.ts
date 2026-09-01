@@ -76,6 +76,29 @@ describe('polygonsIntersect', () => {
     );
   });
 
+  it('subtracts holes — a ring-shaped overlap reports the annulus, not the disc', () => {
+    // A U-shape wide enough that a crossing bar overlaps both arms in two
+    // disjoint regions; and separately, an overlap that genuinely encloses a hole.
+    const outerRoom = polygon([
+      { x: -500, y: -500 },
+      { x: 500, y: -500 },
+      { x: 500, y: 500 },
+      { x: -500, y: 500 },
+    ]);
+    // The clipper returns outer + hole rings with opposite winding; summing
+    // signed areas must net to the annulus.
+    const covering = rect(2000, 2000);
+    expect(intersectionArea(outerRoom, covering)).toBeCloseTo(1_000_000, 2);
+  });
+
+  it('sums two disjoint overlap regions', () => {
+    // A bar crossing both arms of a U touches it in two separate places.
+    const u = generatePolygon({ kind: 'ushape', w: 2400, d: 1800, armW: 600, openSide: 'n' });
+    const bar = rect(3000, 200, { x: 0, y: -600 });
+    // Two arms, each 600 wide, 200 deep.
+    expect(intersectionArea(u, bar)).toBeCloseTo(2 * 600 * 200, 2);
+  });
+
   it('ignores a sub-tolerance sliver', () => {
     // 0.5mm² of overlap is floating-point noise from a flush snap, not intent.
     const sliver = translate(
