@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { activeFloor, useStore } from './store';
-import { addCatalogItem, addOpening, addWallChain, deleteSelection, updateOpening } from './actions';
+import {
+  addCatalogItem,
+  addOpening,
+  addWallChain,
+  deleteSelection,
+  setOpeningSwing,
+  updateOpening,
+} from './actions';
 import { OpeningError } from '../core/openings';
+import { DEFAULT_SWING, leafOf } from '../core/swing';
 import type { ItemDraft } from '../core/catalog';
 
 const SHELF: ItemDraft = {
@@ -179,5 +187,73 @@ describe('deleting', () => {
 
     deleteSelection([{ kind: 'opening', id: opening.id }]);
     expect(useStore.getState().selection).toEqual([]);
+  });
+});
+
+describe('hanging a door', () => {
+  function door() {
+    wall();
+    return addOpening({ x: 2500, y: 20 }, 'door', 100)!;
+  }
+
+  it('reads as a standard swing before anyone has touched it', () => {
+    // Nothing is seeded on creation, so a file written before this existed opens
+    // with its doors hung the ordinary way rather than hinged nowhere.
+    const opening = door();
+    expect(opening.swing).toBeUndefined();
+    expect(leafOf(opening)).toEqual({
+      style: 'hinged',
+      pivot: DEFAULT_SWING.hinge,
+      face: DEFAULT_SWING.into,
+      angleDeg: DEFAULT_SWING.angleDeg,
+    });
+  });
+
+  it('writes a whole swing on the first edit, not a fragment', () => {
+    const opening = door();
+    setOpeningSwing(opening.id, { into: 'back' });
+
+    expect(floor().openings[0]!.swing).toEqual({ hinge: 'a', into: 'back', angleDeg: 90 });
+  });
+
+  it('clamps an angle nobody could hang a door at', () => {
+    const opening = door();
+    setOpeningSwing(opening.id, { angleDeg: 500 });
+    expect(floor().openings[0]!.swing!.angleDeg).toBe(180);
+  });
+
+  it('is one undo step per change', () => {
+    const opening = door();
+    const before = useStore.getState().past.length;
+
+    setOpeningSwing(opening.id, { hinge: 'b' });
+    expect(useStore.getState().past).toHaveLength(before + 1);
+    useStore.getState().undo();
+    expect(floor().openings[0]!.swing).toBeUndefined();
+  });
+
+  it('keeps the hinge you chose through a kind change and back', () => {
+    // A door turned into a cased opening and back is the door you had. `leafOf`
+    // decides whether the field is read; the document just keeps it.
+    const opening = door();
+    setOpeningSwing(opening.id, { hinge: 'b', into: 'back' });
+
+    updateOpening(opening.id, { kind: 'cased' });
+    expect(leafOf(floor().openings[0]!)).toEqual({ style: 'none' });
+
+    updateOpening(opening.id, { kind: 'door' });
+    expect(leafOf(floor().openings[0]!)).toEqual({
+      style: 'hinged',
+      pivot: 'b',
+      face: 'back',
+      angleDeg: 90,
+    });
+  });
+
+  it('does nothing to an opening that is gone', () => {
+    const opening = door();
+    const before = useStore.getState().past.length;
+    setOpeningSwing(`${opening.id}-nope`, { hinge: 'b' });
+    expect(useStore.getState().past).toHaveLength(before);
   });
 });

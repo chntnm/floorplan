@@ -3,8 +3,10 @@ import { createCatalogItem, type ItemDraft } from './catalog';
 import { createBackground } from './calibration';
 import {
   createDocument,
+  type Opening,
   type Placement,
   type SpaceDocument,
+  type Wall,
 } from './document';
 import { flaggedPlacements, validateFloor } from './validation';
 
@@ -237,5 +239,107 @@ describe('hanging from the ceiling', () => {
     const issues = validateFloor(d, d.floors[0]!);
     const sunk = issues.find((i) => i.kind === 'below-floor');
     expect(sunk?.message).toContain('562mm below the floor');
+  });
+});
+
+describe('what a leaf needs kept clear', () => {
+  /** A 5m wall running east from the origin, and one running north from it. */
+  const SOUTH_WALL: Wall = {
+    id: 'w1',
+    a: { x: 0, y: 0 },
+    b: { x: 5000, y: 0 },
+    thicknessMm: 114,
+    heightMm: 2438,
+    baseElevationMm: 0,
+  };
+  const CORNER_WALL: Wall = { ...SOUTH_WALL, id: 'w2', b: { x: 0, y: 4000 } };
+
+  function opening(over: Partial<Opening> = {}): Opening {
+    return {
+      id: 'o1',
+      wallId: 'w1',
+      offsetMm: 1000,
+      widthMm: 813,
+      heightMm: 2032,
+      sillMm: 0,
+      kind: 'door',
+      ...over,
+    };
+  }
+
+  /** A floor with the two walls, one opening, and whatever placements are given. */
+  function floorWith(o: Opening, placements: Placement[] = []) {
+    const d = withItems(['dresser', 'rug', 'bookcase']);
+    const floor = d.floors[0]!;
+    floor.walls = [SOUTH_WALL, CORNER_WALL];
+    floor.openings = [o];
+    floor.placements = placements;
+    return { d, floor };
+  }
+
+  function kinds(o: Opening, placements: Placement[] = []) {
+    const { d, floor } = floorWith(o, placements);
+    return validateFloor(d, floor).map((i) => i.kind);
+  }
+
+  it('reports a dresser standing in a door swing', () => {
+    const { d, floor } = floorWith(opening(), [place('dresser', { x: 1400, y: 400 })]);
+    const issue = validateFloor(d, floor).find((i) => i.kind === 'swing-blocked')!;
+
+    expect(issue.message).toContain('cannot open fully');
+    expect(issue.message).toContain('Dresser');
+    expect(issue.refs.map((r) => r.kind).sort()).toEqual(['opening', 'placement']);
+  });
+
+  it('says nothing once the door is hung to open the other way', () => {
+    const other = opening({ swing: { hinge: 'a', into: 'back', angleDeg: 90 } });
+    expect(kinds(other, [place('dresser', { x: 1400, y: 400 })])).not.toContain('swing-blocked');
+  });
+
+  it('lets a rug lie under the door', () => {
+    // A door blocks from its sill to its head, so a 10mm rug is not in its way —
+    // the same span test as every other collision here, not a special case.
+    expect(kinds(opening({ sillMm: 20 }), [place('rug', { x: 1400, y: 400 })])).not.toContain(
+      'swing-blocked',
+    );
+  });
+
+  it('does not flag a door for swinging against the wall next to it', () => {
+    // A door hung in a corner rests on the adjacent wall. That is how doors are
+    // hung; testing the sweep against walls would fire on nearly every one of them.
+    expect(kinds(opening({ offsetMm: 0 }))).toEqual([]);
+  });
+
+  it('reports a bookcase where a sliding door has to park', () => {
+    const { d, floor } = floorWith(opening({ kind: 'sliding' }), [
+      place('bookcase', { x: 600, y: 120 }),
+    ]);
+    const issue = validateFloor(d, floor).find((i) => i.kind === 'swing-blocked')!;
+
+    expect(issue.message).toContain('nowhere to slide');
+  });
+
+  it('asks nothing of the room for a pocket door', () => {
+    // The whole argument for fitting one: the leaf goes inside the wall, so the
+    // bookcase beside it is not in its way.
+    expect(kinds(opening({ kind: 'pocket' }), [place('bookcase', { x: 600, y: 120 })])).not.toContain(
+      'swing-blocked',
+    );
+  });
+
+  it('reports a pocket door with no cavity to slide into', () => {
+    const { d, floor } = floorWith(opening({ kind: 'pocket', offsetMm: 400 }));
+    const issue = validateFloor(d, floor).find((i) => i.kind === 'pocket-blocked')!;
+
+    expect(issue.message).toContain('413mm short');
+    expect(issue.severity).toBe('warning');
+  });
+
+  it('reports a pocket door that would slide into a window', () => {
+    const pocket = opening({ kind: 'pocket' });
+    const { d, floor } = floorWith(pocket);
+    floor.openings.push({ ...opening(), id: 'o2', offsetMm: 300, widthMm: 914, kind: 'window' });
+
+    expect(validateFloor(d, floor).map((i) => i.kind)).toContain('pocket-blocked');
   });
 });

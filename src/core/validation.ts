@@ -24,7 +24,8 @@ import {
   openingRange,
   rangesOverlap,
 } from './openings';
-import { findCollisions, type Volume } from './geometry/collision';
+import { clearanceVolume, leafOf, pocketFitReason } from './swing';
+import { findCollisions, volumesCollide, type Volume } from './geometry/collision';
 import {
   MountCycleError,
   ceilingHeightAt,
@@ -40,7 +41,9 @@ export type IssueKind =
   | 'missing-item'
   | 'broken-mount'
   | 'opening-fit'
-  | 'opening-overlap';
+  | 'opening-overlap'
+  | 'swing-blocked'
+  | 'pocket-blocked';
 
 export type IssueSeverity = 'blocking' | 'warning';
 
@@ -96,6 +99,22 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
         kind: 'opening-fit',
         severity: 'warning',
         message: reason,
+        refs: [
+          { kind: 'opening', id: opening.id },
+          { kind: 'wall', id: wall.id },
+        ],
+      });
+    }
+
+    // A pocket door with nowhere to slide is a pocket door in name only, and it is
+    // the one thing about the kind that geometry cannot show you: the cavity is
+    // inside the wall, so an unbuildable one looks perfectly fine in both views.
+    const pocket = pocketFitReason(wall, opening, floor.openings);
+    if (pocket) {
+      issues.push({
+        kind: 'pocket-blocked',
+        severity: 'warning',
+        message: pocket,
         refs: [
           { kind: 'opening', id: opening.id },
           { kind: 'wall', id: wall.id },
@@ -212,6 +231,34 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
     }
   }
 
+  // What each leaf needs kept clear, against the furniture. Walls are deliberately
+  // not tested: a door swinging back to rest against the adjacent wall is how doors
+  // are hung, and flagging it would fire on every door in a corner.
+  for (const opening of floor.openings) {
+    const wall = wallsById.get(opening.wallId);
+    if (!wall) continue;
+    const clearance = clearanceVolume(wall, opening);
+    if (!clearance) continue;
+
+    const style = leafOf(opening).style;
+    for (const [i, volume] of volumes.entries()) {
+      if (!volumesCollide(clearance, volume)) continue;
+      const who = label(doc, owners[i]!, floor);
+      issues.push({
+        kind: 'swing-blocked',
+        severity: 'warning',
+        message:
+          style === 'sliding'
+            ? `${OPENING_KIND_LABELS[opening.kind]} has nowhere to slide — ${who} is where it parks.`
+            : `${OPENING_KIND_LABELS[opening.kind]} cannot open fully — ${who} is in its way.`,
+        refs: [
+          { kind: 'opening', id: opening.id },
+          { kind: 'placement', id: owners[i]! },
+        ],
+      });
+    }
+  }
+
   for (const [i, j] of findCollisions(volumes)) {
     const a = owners[i]!;
     const b = owners[j]!;
@@ -233,8 +280,10 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
     'below-floor': 3,
     'opening-fit': 4,
     'opening-overlap': 5,
-    headroom: 6,
-    overlap: 7,
+    'pocket-blocked': 6,
+    'swing-blocked': 7,
+    headroom: 8,
+    overlap: 9,
   };
   return issues.sort((x, y) => order[x.kind] - order[y.kind]);
 }

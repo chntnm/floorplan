@@ -8,6 +8,7 @@ import {
   deleteSelection,
   nudgeBackgroundRotation,
   setCeilingDrop,
+  setOpeningSwing,
   setPlacementMount,
   updateOpening,
   removeBackground,
@@ -29,9 +30,16 @@ import {
   openingRange,
   openingSpan,
 } from '../core/openings';
+import {
+  LEAF_STYLE_LABELS,
+  MAX_SWING_DEG,
+  MIN_SWING_DEG,
+  leafOf,
+  movingLeafOf,
+} from '../core/swing';
 import { hasAsset } from '../state/assets';
 import { LengthInput } from './LengthField';
-import type { MountKind, OpeningKind } from '../core/document';
+import type { MountKind, Opening, OpeningKind } from '../core/document';
 
 const MOUNT_LABELS: Record<string, string> = {
   floor: 'On the floor',
@@ -52,6 +60,64 @@ function selectIssue(issue: Issue): void {
 }
 
 /** A labelled read-only field. */
+/**
+ * Hanging the leaf: which end it is fixed at, which side it opens onto, how far.
+ *
+ * Flip buttons rather than selects, because there is no honest label for the two
+ * sides of a wall — "front" and "back" mean nothing to anyone looking at a plan.
+ * The swing arc in the drawing is what makes the choice legible, so the control's
+ * job is to change it and let you look, which is what a CAD tool gives you too.
+ *
+ * Nothing here renders for a cased opening or a window: `movingLeafOf` returns null
+ * for them, and the narrowing is what lets the angle field exist only for a leaf
+ * that actually has an angle.
+ */
+function OpeningSwing({ opening }: { opening: Opening }) {
+  const leaf = movingLeafOf(opening);
+  if (!leaf) return null;
+
+  return (
+    <div data-testid="opening-swing">
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="flip-hinge"
+          onClick={() => setOpeningSwing(opening.id, { hinge: leaf.pivot === 'a' ? 'b' : 'a' })}
+        >
+          Flip hinge
+        </button>
+        {leaf.style === 'pocket' ? null : (
+          <button
+            type="button"
+            className="btn"
+            data-testid="flip-side"
+            onClick={() => setOpeningSwing(opening.id, { into: leaf.face === 'front' ? 'back' : 'front' })}
+          >
+            Flip side
+          </button>
+        )}
+      </div>
+      <Field label="Hinged" value={leaf.pivot === 'a' ? 'at wall start' : 'at wall end'} />
+      {leaf.style === 'hinged' ? (
+        <label className="field field--input">
+          <span className="field__label">Swing angle</span>
+          <input
+            type="number"
+            value={leaf.angleDeg}
+            min={MIN_SWING_DEG}
+            max={MAX_SWING_DEG}
+            step={5}
+            aria-label="Swing angle in degrees"
+            data-testid="swing-angle"
+            onChange={(e) => setOpeningSwing(opening.id, { angleDeg: Number(e.target.value) })}
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="field">
@@ -209,6 +275,8 @@ export function PropertiesPanel() {
             label="Ends at"
             value={formatLength(openingRange(opening).to, unit)}
           />
+          <Field label="Leaf" value={LEAF_STYLE_LABELS[leafOf(opening).style]} />
+          <OpeningSwing opening={opening} />
         </div>
       ) : null}
 
@@ -414,7 +482,7 @@ export function PropertiesPanel() {
       <h2 className="panel__heading">Validation</h2>
       {issues.length === 0 ? (
         <p className="panel__empty" data-testid="no-issues">
-          No issues. Clearance and door-swing checks arrive in phases 6 and 7.
+          No issues. Item clearance zones and the walkway probe arrive in phase 7.
         </p>
       ) : (
         <ul className="issues" data-testid="issue-list">

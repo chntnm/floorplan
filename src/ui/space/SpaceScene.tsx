@@ -80,7 +80,12 @@ export function SpaceScene({ scene, selection, showCeilings, onSelect }: Props) 
             onSelect({ kind: solid.ref.kind, id: solid.ref.id }, e.nativeEvent.shiftKey);
           }}
         >
-          <meshLambertMaterial color={isSelected(solid) ? SELECTED_COLOR : solid.color} />
+          <meshLambertMaterial
+            color={isSelected(solid) ? SELECTED_COLOR : solid.color}
+            transparent={solid.opacity < 1}
+            opacity={solid.opacity}
+            side={solid.opacity < 1 ? THREE.DoubleSide : THREE.FrontSide}
+          />
         </mesh>
       ))}
     </>

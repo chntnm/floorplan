@@ -19,6 +19,9 @@ export type PlanTheme = {
   roomStroke: string;
   roomLabel: string;
   openingFill: string;
+  /** The door-swing symbol: the arc and leaf line, and the sector behind them. */
+  swingStroke: string;
+  swingFill: string;
   placementFill: string;
   placementStroke: string;
   draft: string;
@@ -40,6 +43,8 @@ const LIGHT: PlanTheme = {
   roomStroke: 'rgba(47, 111, 94, 0.5)',
   roomLabel: '#4a4a45',
   openingFill: '#f4f4f2',
+  swingStroke: '#8c8c86',
+  swingFill: 'rgba(140, 140, 134, 0.10)',
   placementFill: 'rgba(120, 120, 130, 0.35)',
   placementStroke: '#6b6b66',
   draft: '#2f6f5e',
@@ -60,6 +65,8 @@ const DARK: PlanTheme = {
   roomStroke: 'rgba(77, 157, 134, 0.55)',
   roomLabel: '#c2c2c8',
   openingFill: '#17171a',
+  swingStroke: '#7e7e88',
+  swingFill: 'rgba(150, 150, 165, 0.12)',
   placementFill: 'rgba(150, 150, 165, 0.32)',
   placementStroke: '#91919a',
   draft: '#4d9d86',

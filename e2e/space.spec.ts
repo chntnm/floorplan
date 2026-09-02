@@ -192,6 +192,11 @@ test.describe('the layer toggle', () => {
     // The toggle is a property of the document, not of the renderer. Without this,
     // clicking a wall in furnish mode selects it and the panel offers to delete it —
     // structure the plan view is refusing to let you touch.
+    //
+    // A door leaf is gated by the same rule, but is not asserted here: in the orbit
+    // view it is a slab a few pixels wide seen edge-on, and hunting for it by
+    // clicking a grid would be a test of where the camera happens to sit. The rule
+    // itself is covered exhaustively over every kind in `modes.test.ts`.
     await roomWithDoor(page);
     await page.getByRole('button', { name: 'Arrange furniture', exact: true }).click();
 

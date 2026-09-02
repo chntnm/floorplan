@@ -4,7 +4,8 @@ import type Konva from 'konva';
 import type { Floor, Opening, Wall } from '../../core/document';
 import { centroid } from '../../core/geometry/polygon';
 import { wallOutline } from '../../core/geometry/wall';
-import { normalize, perp, sub } from '../../core/geometry/vec';
+import { normalize, perp, sub, type Vec2 } from '../../core/geometry/vec';
+import { leafOf, leafPanel, parkRun, swingSweep } from '../../core/swing';
 import { formatArea, formatLength, type DisplayUnit } from '../../core/units';
 import { docToScreen, flattenToScreen, type Viewport } from '../../core/viewport';
 import type { SelectionRef, WallTransform } from '../../state/store';
@@ -74,6 +75,43 @@ function openingQuad(wall: Wall, opening: Opening): number[] | null {
   });
 
   return [at(start, 1), at(end, 1), at(end, -1), at(start, -1)].flatMap((p) => [p.x, p.y]);
+}
+
+/**
+ * The door symbol, in document space.
+ *
+ * A hinged door draws as the sector `swingSweep` already computes: its boundary *is*
+ * the closed leaf, the arc, and the open leaf, which is exactly the symbol drawn on
+ * a plan. Nothing traces the arc a second time, so the drawing and the clearance
+ * check can never disagree about where the door goes.
+ *
+ * A slider draws the leaf where it parks, dashed, because that is the wall it needs
+ * kept clear. A pocket door draws the same run on the wall centreline — the cavity
+ * is inside the wall, and showing it is the only way the drawing says why the door
+ * cannot go 200mm from the corner.
+ */
+function swingSymbol(
+  wall: Wall,
+  opening: Opening,
+): { points: Vec2[]; closed: boolean; dashed: boolean } | null {
+  const leaf = leafOf(opening);
+
+  if (leaf.style === 'hinged') {
+    const sweep = swingSweep(wall, opening);
+    return sweep ? { points: sweep.pts, closed: true, dashed: false } : null;
+  }
+  if (leaf.style === 'sliding') {
+    const panel = leafPanel(wall, opening);
+    return panel ? { points: panel.pts, closed: true, dashed: true } : null;
+  }
+  if (leaf.style === 'pocket') {
+    const dir = normalize(sub(wall.b, wall.a));
+    if (dir.x === 0 && dir.y === 0) return null;
+    const run = parkRun(opening, leaf.pivot);
+    const at = (t: number) => ({ x: wall.a.x + dir.x * t, y: wall.a.y + dir.y * t });
+    return { points: [at(run.from), at(run.to)], closed: false, dashed: true };
+  }
+  return null;
 }
 
 /**
@@ -213,6 +251,30 @@ export function StructureLayer({
               e.cancelBubble = true;
               onSelect({ kind: 'opening', id: opening.id }, e.evt.shiftKey);
             }}
+          />
+        );
+      })}
+
+      {/* Door symbols, over the openings they belong to and under the handles. Not
+          hit-testable: clicking a swing arc should select the door, and the doorway
+          itself is the target for that — an arc that swallowed clicks would cover a
+          square metre of floor nobody could then select furniture through. */}
+      {floor.openings.map((opening) => {
+        const wall = wallsById.get(opening.wallId);
+        if (!wall) return null;
+        const symbol = swingSymbol(wall, opening);
+        if (!symbol) return null;
+
+        return (
+          <Line
+            key={`${opening.id}-swing`}
+            points={flattenToScreen(viewport, symbol.points)}
+            closed={symbol.closed}
+            listening={false}
+            stroke={isSelected(selection, 'opening', opening.id) ? theme.selection : theme.swingStroke}
+            strokeWidth={1}
+            {...(symbol.closed && !symbol.dashed ? { fill: theme.swingFill } : {})}
+            {...(symbol.dashed ? { dash: [6, 4] } : {})}
           />
         );
       })}

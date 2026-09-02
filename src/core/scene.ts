@@ -17,11 +17,18 @@ import { findItem, type Floor, type Id, type Room, type SpaceDocument } from './
 import type { Span, Volume } from './geometry/collision';
 import { bounds, type Bounds, type Polygon } from './geometry/polygon';
 import { wallOutline } from './geometry/wall';
-import { segmentOutline, wallSegments } from './openings';
+import { openingSpan, segmentOutline, wallSegments } from './openings';
+import { leafOf, leafPanel } from './swing';
 import { MountCycleError, placementSpan, worldOutline } from './placement';
 
-/** What a click in the 3D view resolves to, mirroring the editor's selection shape. */
-export type SceneRef = { kind: 'wall' | 'placement'; id: Id };
+/**
+ * What a click in the 3D view resolves to, mirroring the editor's selection shape.
+ *
+ * `opening` is here because a door leaf is a thing you can point at. It is
+ * **structure**, not furniture — whoever consumes this has to gate it the way it
+ * gates walls, or the layer toggle stops meaning anything in 3D.
+ */
+export type SceneRef = { kind: 'wall' | 'placement' | 'opening'; id: Id };
 
 /**
  * A solid box: a plan polygon extruded between two elevations.
@@ -38,6 +45,8 @@ export type SceneSolid = {
   color: string;
   /** True when the walker's body must not pass through it. */
   blocking: boolean;
+  /** 1 for everything solid; less for glazing. */
+  opacity: number;
 };
 
 /** A horizontal slab — a room's floor or its ceiling. */
@@ -60,6 +69,9 @@ export type SceneModel = {
 };
 
 export const WALL_COLOR = '#d9d4cc';
+export const LEAF_COLOR = '#c9b79c';
+export const GLAZING_COLOR = '#bcd8e6';
+export const GLAZING_OPACITY = 0.35;
 export const FLOOR_COLOR = '#efe9df';
 export const CEILING_COLOR = '#f6f3ee';
 export const DEFAULT_PLACEMENT_COLOR = '#8ba7c4';
@@ -91,7 +103,34 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
         span: { bottom: segment.bottom, top: segment.top },
         color: WALL_COLOR,
         blocking: true,
+        opacity: 1,
       });
+    });
+  }
+
+  // Leaves. A door is drawn where it comes to rest when open, a window is glazed,
+  // and a pocket door contributes nothing because its leaf is inside the wall.
+  const wallsById = new Map(floor.walls.map((w) => [w.id, w]));
+  for (const opening of floor.openings) {
+    const wall = wallsById.get(opening.wallId);
+    if (!wall) continue;
+    const panel = leafPanel(wall, opening);
+    if (!panel) continue;
+
+    const glazing = leafOf(opening).style === 'pane';
+    solids.push({
+      id: `${opening.id}:leaf`,
+      ref: { kind: 'opening', id: opening.id },
+      outline: panel,
+      span: openingSpan(opening),
+      color: glazing ? GLAZING_COLOR : LEAF_COLOR,
+      // Glass stops you; a door standing open does not. At an ordinary window the
+      // sill wall below already blocks, so this only decides the case that should
+      // decide differently — full-height glazing, which you cannot walk through.
+      // A door leaf is drawn open, and treating it as solid would narrow a doorway
+      // by however far it happens to have been swung.
+      blocking: glazing,
+      opacity: glazing ? GLAZING_OPACITY : 1,
     });
   }
 
@@ -121,6 +160,7 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
       span: clamped,
       color: placement.overrides?.color ?? item.color ?? DEFAULT_PLACEMENT_COLOR,
       blocking: true,
+      opacity: 1,
     });
   }
 

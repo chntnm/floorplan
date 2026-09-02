@@ -195,3 +195,45 @@ describe('defaultStandpoint', () => {
     });
   });
 });
+
+describe('leaves in the scene', () => {
+  function withOpening(kind: 'door' | 'window' | 'pocket' | 'cased' | 'sliding') {
+    const doc = room();
+    const wall = doc.floors[0]!.walls[0]!;
+    const opening = createOpening({ id: 'o1', wall, kind, centreMm: 2500 });
+    doc.floors[0]!.openings.push(opening);
+    const scene = buildScene(doc, doc.floors[0]!);
+    return { scene, leaf: scene.solids.find((s) => s.id === 'o1:leaf') };
+  }
+
+  it('stands a door leaf where the door comes to rest', () => {
+    const { leaf } = withOpening('door');
+    expect(leaf).toBeDefined();
+    expect(leaf!.ref).toEqual({ kind: 'opening', id: 'o1' });
+  });
+
+  it('does not let an open door narrow its own doorway', () => {
+    // A leaf is drawn open, and you cannot push it. Treating it as solid would make
+    // a doorway passable or not depending on how far the door happens to be swung.
+    const { scene, leaf } = withOpening('door');
+    expect(leaf!.blocking).toBe(false);
+    expect(blockersOf(scene).some((v) => v.outline === leaf!.outline)).toBe(false);
+  });
+
+  it('glazes a window, and glass stops you', () => {
+    const { leaf } = withOpening('window');
+    expect(leaf!.blocking).toBe(true);
+    expect(leaf!.opacity).toBeLessThan(1);
+  });
+
+  it('draws nothing for a pocket door or a cased opening', () => {
+    expect(withOpening('pocket').leaf).toBeUndefined();
+    expect(withOpening('cased').leaf).toBeUndefined();
+  });
+
+  it('parks a sliding leaf over the wall beside the opening', () => {
+    const { leaf } = withOpening('sliding');
+    expect(leaf).toBeDefined();
+    expect(leaf!.blocking).toBe(false);
+  });
+});

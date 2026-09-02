@@ -18,6 +18,7 @@ import type {
   Wall,
 } from '../core/document';
 import { createOpening, type OpeningDefaults } from '../core/openings';
+import { DEFAULT_SWING, clampSwingAngle, type Swing } from '../core/swing';
 import { nearestWall, projectOntoWall } from '../core/geometry/wall';
 import { createSavedView, uniqueViewName, type SpaceCamera } from '../core/views';
 import type { Mount } from '../core/document';
@@ -197,6 +198,12 @@ export function addOpening(
  * the user meant, and quietly moving their front door to make it fit would hide the
  * mistake; validation reports an opening that no longer fits and the geometry simply
  * does not build it.
+ *
+ * A `kind` change deliberately does **not** clear the stored `swing`. Turning a door
+ * into a cased opening and back gives you the door you had, hinged where you hung it,
+ * rather than one re-seeded from defaults. `leafOf` decides whether the field is read
+ * at all, so an unread swing on a cased opening costs nothing, and dropping one costs
+ * a choice the user made.
  */
 export function updateOpening(openingId: Id, patch: Partial<Omit<Opening, 'id' | 'wallId'>>): void {
   useStore.getState().mutate('Edit opening', (draft) => {
@@ -208,7 +215,32 @@ export function updateOpening(openingId: Id, patch: Partial<Omit<Opening, 'id' |
       if (patch.widthMm !== undefined) opening.widthMm = Math.max(1, Math.round(patch.widthMm));
       if (patch.heightMm !== undefined) opening.heightMm = Math.max(1, Math.round(patch.heightMm));
       if (patch.sillMm !== undefined) opening.sillMm = Math.max(0, Math.round(patch.sillMm));
+      if (patch.swing !== undefined) opening.swing = { ...patch.swing };
     }
+  });
+}
+
+/**
+ * Change one part of an opening's swing — which end it is hinged at, which side it
+ * opens onto, how far it opens.
+ *
+ * Merged onto the *effective* swing rather than the stored one, so the first edit to
+ * an opening that has never had a swing written writes a whole one instead of a
+ * fragment. `leafOf` supplies the standard until then, which is why nothing had to be
+ * seeded when the opening was created — and why every opening in a file saved before
+ * this phase still reads as a door hung the ordinary way.
+ */
+export function setOpeningSwing(openingId: Id, patch: Partial<Swing>): void {
+  const opening = activeFloor(useStore.getState()).openings.find((o) => o.id === openingId);
+  if (!opening) return;
+
+  const current: Swing = opening.swing ?? DEFAULT_SWING;
+  updateOpening(openingId, {
+    swing: {
+      hinge: patch.hinge ?? current.hinge,
+      into: patch.into ?? current.into,
+      angleDeg: clampSwingAngle(patch.angleDeg ?? current.angleDeg),
+    },
   });
 }
 

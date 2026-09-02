@@ -2,7 +2,7 @@ import { Component, useRef, type ErrorInfo, type ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
 import { look } from '../../core/walk';
-import { placementsAreEditable, structureIsEditable } from '../../core/modes';
+import { refIsEditable } from '../../core/modes';
 import type { SpaceCamera } from '../../core/views';
 import { activeFloor, useStore, type SelectionRef } from '../../state/store';
 import { sceneFor } from './scene-cache';
@@ -119,10 +119,9 @@ export function SpaceView() {
     if (drag.current.moved > DRAG_THRESHOLD_PX) return;
 
     // The layer toggle is a property of the document, not of the renderer: structure
-    // locked in the plan view is locked here too. Without this, clicking a wall in
-    // furnish mode selects it and the properties panel offers to delete it.
-    if (ref.kind === 'wall' && !structureIsEditable(editMode)) return;
-    if (ref.kind === 'placement' && !placementsAreEditable(editMode)) return;
+    // locked in the plan view is locked here too. Without this, clicking a wall — or
+    // a door leaf — in furnish mode selects it and the panel offers to delete it.
+    if (!refIsEditable(editMode, ref.kind)) return;
 
     const store = useStore.getState();
     if (additive) store.toggleSelection(ref);

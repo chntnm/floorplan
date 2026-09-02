@@ -256,8 +256,8 @@ type Opening = {
   heightMm: number;
   sillMm: number;            // 0 for doors, ~900 for windows
   kind: 'door' | 'window' | 'cased' | 'pocket' | 'sliding';
-  swing?: {                  // doors only
-    hinge: 'a' | 'b';        // which end of the opening
+  swing?: {                  // read only where the kind has a leaf
+    hinge: 'a' | 'b';        // hinged there, or parked there when open
     into: 'front' | 'back';  // which side of the wall
     angleDeg: number;        // 90 typical; drives the swing arc + 3D door panel
   };
@@ -290,6 +290,16 @@ furniture that happens to sit in a gap. Hosting means an opening moves when its 
 moves, is constrained to that wall's length, and its swing arc participates in clearance
 checks. In 3D, an opening cuts a real hole in the extruded wall mesh and — for doors —
 renders a panel at the swing angle.
+
+**One stored field, read according to the kind.** `swing` is the only thing recorded,
+and `leafOf` reads it into a shape named for the *leaf*: hinged doors get an angle,
+sliding doors get a park end and a face but structurally **no angle to read**, pocket
+doors get only a park end, and cased openings and windows get no leaf at all. That is
+what stops a slider quietly acquiring a swing angle nobody set, without a second
+stored field or a migration. The field is deliberately **retained across a kind
+change** — a door turned into a cased opening and back is the door you had, hinged
+where you hung it — so a cased opening in a saved file may carry a `swing` that
+nothing reads. Losing a choice the user made is the worse trade.
 
 ### 4.5 The document
 
@@ -562,7 +572,14 @@ than one that tells you and gets out of the way.
 
 Additional 3D-only checks:
 - **Headroom** — `elevation + heightMm > room.ceilingHeightMm`
-- **Door swing** — the swept swing arc, from sill to door height, against object volumes
+- **Door swing** — the swept arc, from sill to head, against **object volumes only**.
+  Walls are not tested: a door swinging back to rest against the adjacent wall is how
+  doors are hung, and flagging it would fire on nearly every door in a corner. The
+  sector is polygonised at one vertex per 5°, because it is a collision polygon and a
+  chord cuts *inside* the true arc — too coarse and a narrow object at the outer edge
+  falls into the gap and is never reported. A slider is checked against the wall it
+  parks over instead; a pocket door is checked against nothing in the room, which is
+  the entire argument for fitting one, and instead has to prove its cavity exists.
 - **Wall-mount validity** — a wall-mounted item whose span exceeds its host wall, or
   which overlaps an opening
 
@@ -626,8 +643,13 @@ sync.
 - **Placements** — extruded from the same `outline` polygon that the 2D view draws and
   the collision engine tests, raised to `elevation`, height `heightMm`. Circles and
   ellipses build true cylinders from their generator. One primitive, three consumers.
-- **Doors** — a real panel at the swing angle, hinged correctly. Windows get a
-  transparent pane at the sill height.
+- **Doors** — a real panel at the swing angle, hinged on the *face* it opens onto
+  rather than on the centreline (half a wall thickness, invisible in a drawing and a
+  systematic bias in every clearance answer if skipped). Windows get a transparent
+  pane. A pocket door draws no leaf at all, because its leaf is inside the wall.
+  **Glazing blocks the walker and an open door does not** — glass is something you
+  cannot walk through, while a leaf drawn open would otherwise narrow its own doorway
+  by however far it happens to have been swung, and there is no way to push it.
 - **Appearance** — v1 is flat category colors with soft shading, plus the product
   thumbnail applied to the top face for identification from above. `modelAssetId` is
   reserved in the format for GLTF models in v2; nothing else changes when they land.
@@ -725,7 +747,7 @@ isolated so neither blocks the core editor.
 | **3** | **Import + calibration** — PDF via pdfjs (dynamically imported, so the 437kB renderer stays off first paint), image import, the blocking calibration gate, background transform/opacity/lock, tracing over a real plan. An uncalibrated background is shown at a nominal 6m width so the reference line is drawable *and* so the transform is invertible before a real scale exists; calibrating rescales about `refA` so the point the user anchored on does not move, and `transform.position` stays a float because rounding it would drift the anchor on every recalibration. Import deliberately does not re-fit the viewport. Deferred: thumbnails and File System Access (phase 9), vector path extraction (v2). |
 | **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap, surface snap, rotation, and 3D overlap warnings. **First genuinely useful build.** Wall snap seats the footprint's *back edge* (local −y) on the wall's near face and rotates to match, never the centre on the centreline. The calibration gate stops being decorative here: `addPlacement` throws `PlacementBlockedError` carrying the same sentence the validation panel shows, and the Place button is disabled rather than offered-and-refused. Deleting a placement re-seats anything surface-mounted on it, so the document never references a host that is gone. Headroom arrives early — `exceedsHeadroom` already existed — but clearance zones (7) and door swing (6) are still out. |
 | **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. An opening cuts a wall in *elevation*, not in plan, so `ExtrudeGeometry` holes were never the answer: `wallSegments` **splits** the wall into the solid boxes that remain — flank, sill wall, lintel, flank — which needs no CSG and hands the same list to the renderer, the walker and the validation panel. A doorway is passable because the only solid above it starts at 2032mm, with no "is this a door" check anywhere in traversal. The walk simulation deliberately lives *outside* three.js: a plain rAF loop over pure functions, so the camera consumes the walker rather than owning it, the position readout survives a browser with no WebGL, and traversal is testable without a GPU. Deferred and stated rather than claimed: **instancing** (§10.4's 500-at-60fps target is unmeasured — one mesh per solid today), and a real contact-normal collision resolver (moves are retried per axis, so diagonal walls slide stickily). |
-| **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. |
+| **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. The five kinds behave in four different ways, and the difference is the reason the kinds exist: hinged doors need their swept sector clear, sliders need the wall they park over clear, pocket doors need **nothing** in the room clear and instead need a cavity that can exist, and cased openings and windows need nothing at all. The swept sector is computed once and serves three consumers — its boundary *is* the 2D door symbol (closed leaf, arc, open leaf), it is the clearance polygon, and it positions the 3D panel — so the drawing and the check cannot disagree about where the door goes. Hanging the leaf is done with **flip buttons, not selects**, because there is no honest label for the two sides of a wall; the arc in the drawing is what makes the choice legible. Deferred and stated rather than claimed: **windows do not open** (a casement sash would swing like a door and is not built), and the 3D layer-toggle gate on a door leaf is covered by an exhaustive unit test over `refIsEditable` rather than end to end — in the orbit view a leaf is a slab a few pixels wide seen edge-on, and walk mode does not take selection clicks at all, so hunting for it with a grid of clicks would test where the camera happens to sit. |
 | **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. |
 | **8** | **Multi-room and multi-floor** — room detection and areas, per-room ceiling heights, floor stacking, ghost underlay, 3D floor toggles. |
 | **9** | **Polish and portability** — File System Access save-in-place, IndexedDB autosave and recovery, thumbnails, product URL lookup endpoint + confirm dialog, export/import e2e, migration tests. |
