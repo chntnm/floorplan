@@ -243,7 +243,15 @@ test.describe('portability', () => {
   });
 
   test('reports an unreadable file instead of failing silently', async ({ page }) => {
-    page.on('dialog', (d) => void d.accept());
+    // Collected rather than just accepted: asserting the count is unchanged proves
+    // nothing on its own, since it was already zero — the only thing that could fail
+    // it is a dialog left open blocking the page, which reads as a mystery timeout.
+    // What this test is actually about is that the app *said something*.
+    const dialogs: string[] = [];
+    page.on('dialog', (d) => {
+      dialogs.push(d.message());
+      void d.accept();
+    });
 
     await page.getByLabel('Open a .space file').setInputFiles({
       name: 'broken.space',
@@ -251,7 +259,10 @@ test.describe('portability', () => {
       buffer: Buffer.from('this is not a zip'),
     });
 
-    // The document already open is left exactly as it was.
+    await expect.poll(() => dialogs.length).toBe(1);
+    expect(dialogs[0]).toContain('not a readable .space container');
+
+    // And the document already open is left exactly as it was.
     await expect(page.getByTestId('count-walls')).toContainText('0');
   });
 });

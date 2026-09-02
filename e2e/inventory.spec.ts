@@ -52,6 +52,14 @@ test.describe('the catalog', () => {
     await page.getByLabel('Width').fill('1.8m');
     await page.getByLabel('Depth').fill('30"');
     await page.getByLabel('Height').fill('900');
+    // Wall and ceiling mounts are stored but not reachable when placing yet, so the
+    // form does not offer them — the same rule as the Place button.
+    // Asserted on the attribute: Playwright reports an <option> as enabled even when
+    // it carries `disabled`, so toBeDisabled() would pass for the wrong reason.
+    await expect(page.getByLabel('Mount').locator('option[value="wall"]')).toHaveAttribute(
+      'disabled',
+      '',
+    );
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
     await expect(page.getByTestId('item-list')).toContainText('Workbench');
@@ -143,6 +151,26 @@ test.describe('placing', () => {
     // Just inside the room's left wall, which runs vertically. A sofa dropped here
     // without a wall snap would stay at rotation 0; only the snap turns it.
     await clickAt(page, page.getByTestId('plan-stage'), { x: 300, y: 1500 });
+
+    await expect(page.getByTestId('placement-properties')).toBeVisible();
+    await expect(page.getByTestId('placement-rotation')).toHaveText('270°');
+  });
+
+  test('re-snaps to a wall when dragged toward one', async ({ page }) => {
+    // The composition the unit tests cannot reach: a real snap context built from
+    // the document, fed through a drag that re-solves the snap every frame.
+    await drawRoom(page);
+    await addPreset(page, 'Seating — Sofa (3-seat)');
+    await armFirstItem(page);
+
+    const stage = page.getByTestId('plan-stage');
+    // Drop it in open floor, well away from every wall.
+    await clickAt(page, stage, { x: 2000, y: 1500 });
+    await expect(page.getByTestId('placement-rotation')).toHaveText('0°');
+    await page.keyboard.press('Escape');
+
+    // Now drag it against the left wall, which runs vertically.
+    await dragBetween(page, stage, { x: 2000, y: 1500 }, { x: 300, y: 1500 });
 
     await expect(page.getByTestId('placement-properties')).toBeVisible();
     await expect(page.getByTestId('placement-rotation')).toHaveText('270°');

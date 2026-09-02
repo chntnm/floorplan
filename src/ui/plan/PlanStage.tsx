@@ -224,6 +224,11 @@ export function PlanStage() {
     const placement = activeFloor(state).placements.find((p) => p.id === placementId);
     const grab = state.cursor;
     if (!placement || !grab) return;
+    // A placement whose item is gone has no footprint to snap with, and its snap
+    // context would come back null — which would quietly ignore Alt for the whole
+    // drag. It also has nothing rendered to grab, so this is belt and braces; stating
+    // it here keeps that a rule rather than a coincidence.
+    if (!snapCtxFor(placement.itemId, placement.id)) return;
 
     state.setPlacementTransform({
       placementId,
