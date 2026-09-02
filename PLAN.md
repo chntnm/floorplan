@@ -493,6 +493,18 @@ model the requirements asked for and the main 2D performance win.
 Undo/redo is global and linear across both modes, implemented as immer patch pairs on
 the zustand store. Mode switches are not undoable steps.
 
+The store is split into a **document slice**, where every mutation records a patch
+pair, and an **editor slice** (tool, draft, cursor, selection, viewport, modes) that
+records nothing. A gesture in progress lives entirely in the editor slice and touches
+the document exactly once, on release. Without that split a drag would leave one undo
+entry per mousemove and Ctrl+Z would appear to do nothing.
+
+**Finishing a polyline is same-place, not double-click.** Konva's `dblclick` fires on
+any two clicks inside a 400ms window with no distance check at all, so drawing two wall
+points quickly — which is how anyone draws — ends the chain at the second point.
+Clicking the same spot twice is the gesture people actually mean, and it needs no
+timer; Enter and closing the loop also finish.
+
 ---
 
 ## 9. Placement Quality

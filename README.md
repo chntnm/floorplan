@@ -8,8 +8,10 @@ elevation, so a rug under a table is not a collision, a wall shelf at 1400mm doe
 block a desk at 750mm, and a 2100mm bookcase under a 2050mm soffit is a violation the
 app catches.
 
-> **Status: phase 0.** Scaffold and app shell only. See [PLAN.md](./PLAN.md) for the
-> full architecture and phasing.
+> **Status: phase 2.** The plan editor works: draw walls, rooms and shapes by hand
+> with grid/angle/endpoint snapping, select and delete, undo/redo, and save to a
+> `.space` file another machine can open. Floor plan import (phase 3), the inventory
+> (phase 4) and the 3D view (phase 5) are not built yet. See [PLAN.md](./PLAN.md).
 
 ## Quick start
 
@@ -35,8 +37,10 @@ pnpm dev            # http://localhost:5190
 
 ```
 src/
-├── core/          pure logic — units, geometry, document model, validation
+├── core/          pure logic — units, geometry, document model, tools, validation
+├── state/         zustand store: document slice (undoable) + editor slice (not)
 ├── ui/            React shell, panels, dialogs
+│   └── plan/      Konva stage and its layers
 └── styles/        global CSS
 e2e/               Playwright specs
 PLAN.md            architecture + phasing
@@ -55,3 +59,8 @@ primitive serving all three.
   lives in exactly one place and is tested both directions.
 - Rotation is never baked into stored vertices. Footprints stay in local coordinates;
   world geometry is derived per query.
+- **Document state is undoable; editor state is not.** A drag lives entirely in the
+  editor slice and writes to the document once, on release, so one drawn wall is one
+  press of Ctrl+Z rather than several hundred.
+- Coordinates round to integer millimetres at the commit boundary, never during a
+  drag — rounding mid-gesture makes geometry jitter against the cursor.

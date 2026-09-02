@@ -1,13 +1,17 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('app shell', () => {
-  test('boots and renders both panels and the viewport', async ({ page }) => {
+  test('boots and renders both panels and the plan editor', async ({ page }) => {
     await page.goto('/');
 
     await expect(page.getByText('roomplan')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Properties' })).toBeVisible();
-    await expect(page.getByText('Plan view')).toBeVisible();
+
+    // The Konva stage replaced the phase-0 placeholder card.
+    await expect(page.getByTestId('plan-stage')).toBeVisible();
+    await expect(page.getByTestId('plan-stage').locator('canvas').first()).toBeVisible();
+    await expect(page.getByTestId('count-walls')).toContainText('0');
   });
 
   test('edit mode toggle locks and unlocks structure', async ({ page }) => {
@@ -35,5 +39,6 @@ test.describe('app shell', () => {
 
     await expect(page.getByText('Space view')).toBeVisible();
     await expect(page.getByText(/arrow-key traversal/)).toBeVisible();
+    await expect(page.getByTestId('plan-stage')).toHaveCount(0);
   });
 });
