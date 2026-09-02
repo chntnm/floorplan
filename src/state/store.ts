@@ -40,7 +40,7 @@ import type { EditMode, ViewMode } from '../core/modes';
 import { bounds, type Bounds } from '../core/geometry/polygon';
 import { wallOutline } from '../core/geometry/wall';
 import type { Vec2 } from '../core/geometry/vec';
-import type { Mount } from '../core/document';
+import type { Mount, OpeningKind } from '../core/document';
 import type { PlacementSnapHint } from '../core/placement-snap';
 import type { AssetMap } from '../core/space-file';
 import { adoptAssets, clearAssets } from './assets';
@@ -49,7 +49,7 @@ import { adoptAssets, clearAssets } from './assets';
 // throws at runtime — which neither typecheck nor lint can see.
 enablePatches();
 
-export type SelectionKind = 'wall' | 'room' | 'placement';
+export type SelectionKind = 'wall' | 'room' | 'opening' | 'placement';
 export type SelectionRef = { kind: SelectionKind; id: Id };
 
 export type MutateOptions = {
@@ -147,6 +147,8 @@ export type StoreState = {
   viewMode: ViewMode;
   tool: PlanTool;
   shapeKind: ShapeKind;
+  /** Which kind of opening the opening tool drops. */
+  openingKind: OpeningKind;
   viewport: Viewport;
   stageSize: Size;
   selection: SelectionRef[];
@@ -187,6 +189,7 @@ export type StoreState = {
   setViewMode: (mode: ViewMode) => void;
   setTool: (tool: PlanTool) => void;
   setShapeKind: (kind: ShapeKind) => void;
+  setOpeningKind: (kind: OpeningKind) => void;
   setViewport: (viewport: Viewport) => void;
   setStageSize: (size: Size) => void;
   setSelection: (selection: SelectionRef[]) => void;
@@ -224,6 +227,7 @@ function pruneSelection(doc: SpaceDocument, selection: SelectionRef[]): Selectio
   for (const floor of doc.floors) {
     for (const w of floor.walls) live.add(`wall:${w.id}`);
     for (const r of floor.rooms) live.add(`room:${r.id}`);
+    for (const o of floor.openings) live.add(`opening:${o.id}`);
     for (const p of floor.placements) live.add(`placement:${p.id}`);
   }
   const kept = selection.filter((s) => live.has(`${s.kind}:${s.id}`));
@@ -375,6 +379,7 @@ export const useStore = create<StoreState>((set, get) => ({
   viewMode: 'plan2d',
   tool: 'select',
   shapeKind: 'rect',
+  openingKind: 'door',
   viewport: DEFAULT_VIEWPORT,
   stageSize: { width: 800, height: 600 },
   selection: [],
@@ -409,6 +414,7 @@ export const useStore = create<StoreState>((set, get) => ({
   setTool: (tool) =>
     set({ tool, draft: null, transform: null, placementTransform: null, measurement: null }),
   setShapeKind: (shapeKind) => set({ shapeKind, tool: 'shape', draft: null }),
+  setOpeningKind: (openingKind) => set({ openingKind, tool: 'opening', draft: null }),
   setViewport: (viewport) => set({ viewport }),
   setStageSize: (stageSize) => set({ stageSize }),
   setSelection: (selection) => set({ selection }),

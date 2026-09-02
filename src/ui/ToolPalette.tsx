@@ -1,5 +1,6 @@
 import { useShallow } from 'zustand/react/shallow';
 import { structureIsEditable } from '../core/modes';
+import { OPENING_KINDS, OPENING_KIND_LABELS } from '../core/openings';
 import {
   PLAN_TOOLS,
   PLAN_TOOL_KEYS,
@@ -17,10 +18,11 @@ import { useStore } from '../state/store';
  * mode is why.
  */
 export function ToolPalette() {
-  const { tool, shapeKind, editMode, gridEnabled, calibrating } = useStore(
+  const { tool, shapeKind, openingKind, editMode, gridEnabled, calibrating } = useStore(
     useShallow((s) => ({
       tool: s.tool,
       shapeKind: s.shapeKind,
+      openingKind: s.openingKind,
       editMode: s.editMode,
       gridEnabled: s.gridEnabled,
       calibrating: s.calibrating,
@@ -50,6 +52,23 @@ export function ToolPalette() {
           </button>
         ))}
       </div>
+
+      {tool === 'opening' && enabled ? (
+        <div className="palette__row" role="group" aria-label="Opening">
+          {OPENING_KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              className="seg seg--small"
+              data-active={k === openingKind}
+              aria-pressed={k === openingKind}
+              onClick={() => useStore.getState().setOpeningKind(k)}
+            >
+              {OPENING_KIND_LABELS[k]}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {tool === 'shape' && enabled ? (
         <div className="palette__row" role="group" aria-label="Shape">

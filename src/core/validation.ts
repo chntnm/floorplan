@@ -18,6 +18,12 @@
 
 import { placementBlockReason } from './calibration';
 import { findItem, type Floor, type Id, type SpaceDocument } from './document';
+import {
+  OPENING_KIND_LABELS,
+  openingFitReason,
+  openingRange,
+  rangesOverlap,
+} from './openings';
 import { findCollisions, type Volume } from './geometry/collision';
 import {
   MountCycleError,
@@ -30,12 +36,15 @@ export type IssueKind =
   | 'uncalibrated'
   | 'overlap'
   | 'headroom'
+  | 'below-floor'
   | 'missing-item'
-  | 'broken-mount';
+  | 'broken-mount'
+  | 'opening-fit'
+  | 'opening-overlap';
 
 export type IssueSeverity = 'blocking' | 'warning';
 
-export type IssueRef = { kind: 'wall' | 'room' | 'placement'; id: Id };
+export type IssueRef = { kind: 'wall' | 'room' | 'opening' | 'placement'; id: Id };
 
 export type Issue = {
   kind: IssueKind;
@@ -73,6 +82,52 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
     issues.push({ kind: 'uncalibrated', severity: 'blocking', message: blocked, refs: [] });
   }
 
+  // Openings. A wall dragged shorter leaves its doors hanging past the end, and
+  // nothing re-clamps them — deliberately, because silently sliding somebody's front
+  // door along the wall would hide the mistake rather than report it.
+  const wallsById = new Map(floor.walls.map((w) => [w.id, w]));
+  for (const opening of floor.openings) {
+    const wall = wallsById.get(opening.wallId);
+    if (!wall) continue; // deletion takes openings with the wall; nothing to report
+
+    const reason = openingFitReason(wall, opening);
+    if (reason) {
+      issues.push({
+        kind: 'opening-fit',
+        severity: 'warning',
+        message: reason,
+        refs: [
+          { kind: 'opening', id: opening.id },
+          { kind: 'wall', id: wall.id },
+        ],
+      });
+    }
+  }
+
+  // Overlapping openings on the same wall. The geometry merges them into one gap, so
+  // without this the user gets a wider doorway than either door they placed and no
+  // indication of why.
+  for (let i = 0; i < floor.openings.length; i++) {
+    for (let j = i + 1; j < floor.openings.length; j++) {
+      const a = floor.openings[i]!;
+      const b = floor.openings[j]!;
+      if (a.wallId !== b.wallId) continue;
+      if (!rangesOverlap(openingRange(a), openingRange(b))) continue;
+
+      issues.push({
+        kind: 'opening-overlap',
+        severity: 'warning',
+        message: `${OPENING_KIND_LABELS[a.kind]} and ${OPENING_KIND_LABELS[
+          b.kind
+        ].toLowerCase()} overlap in the same wall.`,
+        refs: [
+          { kind: 'opening', id: a.id },
+          { kind: 'opening', id: b.id },
+        ],
+      });
+    }
+  }
+
   // Volumes, and the placements they belong to. A placement whose item or mount is
   // broken contributes an issue instead of a volume — colliding it against anything
   // would be asserting a position it does not really have.
@@ -104,12 +159,37 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
       }
     }
 
+    // A wall mount keeps its stored elevation whether or not the wall is still
+    // there, so unlike a surface mount this one does not degrade to anything
+    // visible — the shelf simply hangs in mid-air until someone is told.
+    if (placement.mount.kind === 'wall' && !wallsById.has(placement.mount.wallId)) {
+      issues.push({
+        kind: 'broken-mount',
+        severity: 'warning',
+        message: `${item.name} is mounted on a wall that no longer exists.`,
+        refs: [{ kind: 'placement', id: placement.id }],
+      });
+    }
+
     try {
       volumes.push(placementVolume(doc, placement, item));
       owners.push(placement.id);
 
       const span = placementSpan(doc, placement, item);
       const ceiling = ceilingHeightAt(doc, placement);
+
+      // A ceiling mount resolves to `ceiling − drop − height`, which goes negative
+      // for anything tall enough — a 2400mm pendant in a 2438mm room. `solidSpan`
+      // will not object, so the item silently sinks through the floor.
+      if (span.bottom < 0) {
+        issues.push({
+          kind: 'below-floor',
+          severity: 'warning',
+          message: `${item.name} hangs ${Math.round(-span.bottom)}mm below the floor. Reduce the drop, or lower the item.`,
+          refs: [{ kind: 'placement', id: placement.id }],
+        });
+      }
+
       if (span.top > ceiling) {
         issues.push({
           kind: 'headroom',
@@ -150,8 +230,11 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
     uncalibrated: 0,
     'broken-mount': 1,
     'missing-item': 2,
-    headroom: 3,
-    overlap: 4,
+    'below-floor': 3,
+    'opening-fit': 4,
+    'opening-overlap': 5,
+    headroom: 6,
+    overlap: 7,
   };
   return issues.sort((x, y) => order[x.kind] - order[y.kind]);
 }

@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { CATEGORIES, CATEGORY_DEFAULTS, CATEGORY_LABELS, type ItemDraft } from '../core/catalog';
 import { SHAPE_KINDS, SHAPE_KIND_LABELS, type ShapeKind } from '../core/tools';
-import { formatLength, parseLength, type DisplayUnit } from '../core/units';
+import type { DisplayUnit } from '../core/units';
+import { parseLength } from '../core/units';
+import { LengthField } from './LengthField';
 import type { Category, MountKind } from '../core/document';
 
 type Props = {
@@ -20,37 +22,6 @@ const EMPTY: ItemDraft = {
   heightMm: 0,
   shape: 'rect',
 };
-
-/** A length field: typed in any unit, held as text until it parses. */
-function LengthField({
-  label,
-  value,
-  unit,
-  onChange,
-  hint,
-}: {
-  label: string;
-  value: string;
-  unit: DisplayUnit;
-  onChange: (next: string) => void;
-  hint?: string;
-}) {
-  const parsed = parseLength(value, unit);
-  return (
-    <label className="field field--input">
-      <span className="field__label">{label}</span>
-      <input
-        value={value}
-        aria-label={label}
-        placeholder={unit === 'ft-in' ? '30"' : '760'}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <span className="field__hint">
-        {value && parsed === null ? '?' : parsed !== null ? formatLength(parsed, unit) : (hint ?? '')}
-      </span>
-    </label>
-  );
-}
 
 /**
  * Manual entry — the primary path into the inventory (PLAN.md §7.1).

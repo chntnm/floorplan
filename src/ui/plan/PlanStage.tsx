@@ -15,6 +15,7 @@ import { PLAN_TOOL_KEYS, PLAN_TOOLS, type PlanTool } from '../../core/tools';
 import { panBy, pxToMm, screenToDoc, zoomAt } from '../../core/viewport';
 import { activeFloor, documentGridMm, useStore, type SelectionRef } from '../../state/store';
 import {
+  addOpening,
   addPlacement,
   addRoomRect,
   addShapeRoom,
@@ -28,6 +29,7 @@ import {
   rotatePlacementBy,
 } from '../../state/actions';
 import { PlacementBlockedError } from '../../core/calibration';
+import { OpeningError } from '../../core/openings';
 import { flaggedPlacements, validateFloor } from '../../core/validation';
 import { ROTATION_STEP_DEG, snapPlacement } from '../../core/placement-snap';
 import { BackgroundLayer } from './BackgroundLayer';
@@ -276,6 +278,37 @@ export function PlanStage() {
     }
   };
 
+  /**
+   * Put an opening in the wall under the pointer.
+   *
+   * Deliberately uses the *raw* point rather than the snapped one. Grid snapping
+   * moves a click by up to half a cell, which is enough to push it off a 114mm wall
+   * entirely — and the position along the wall is decided by projection onto the
+   * centreline anyway, so the grid has nothing useful to contribute here.
+   */
+  const dropOpening = (stage: Konva.Stage) => {
+    const state = useStore.getState();
+    const raw = rawAt(stage);
+    if (!raw) return;
+
+    try {
+      const opening = addOpening(
+        raw,
+        state.openingKind,
+        pxToMm(state.viewport, DEFAULT_SNAP_TOLERANCE_PX),
+      );
+      if (opening) state.setSelection([{ kind: 'opening', id: opening.id }]);
+    } catch (err) {
+      // A wall too short to hold the opening. The message names the sizes, and the
+      // document is untouched — `createOpening` throws before the mutation.
+      if (err instanceof OpeningError) {
+        window.alert(err.message);
+        return;
+      }
+      throw err;
+    }
+  };
+
   // ---- pointer -----------------------------------------------------------
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = e.target.getStage();
@@ -304,6 +337,13 @@ export function PlanStage() {
     // otherwise read as the start of a pan.
     if (e.evt.button === 0 && useStore.getState().placingItemId) {
       dropArmedItem(stage);
+      return;
+    }
+
+    // An opening is a single click on a wall rather than a draft, so it is handled
+    // before the draw-tool switch below. A click that lands on no wall does nothing.
+    if (e.evt.button === 0 && tool === 'opening') {
+      dropOpening(stage);
       return;
     }
 

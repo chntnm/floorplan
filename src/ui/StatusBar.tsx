@@ -37,6 +37,9 @@ export function StatusBar() {
       <span data-testid="count-rooms">
         Rooms <b>{floor.rooms.length}</b>
       </span>
+      <span data-testid="count-openings">
+        Openings <b>{floor.openings.length}</b>
+      </span>
       <span data-testid="count-placements">
         Items <b>{floor.placements.length}</b>
       </span>

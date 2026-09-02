@@ -131,11 +131,18 @@ export type OpeningKind = 'door' | 'window' | 'cased' | 'pocket' | 'sliding';
 export type Opening = {
   id: Id;
   wallId: Id;
-  /** Distance from `wall.a` along the centreline. */
+  /**
+   * The opening's **leading edge**, in mm from `wall.a` along the centreline.
+   *
+   * The leading edge rather than the centre because it is the coordinate the wall
+   * split works in — `wallSegments` needs `[from, to]` — and because it makes
+   * "does this still fit?" a comparison against 0 and the wall length rather than
+   * against half-widths. Click-to-place converts a clicked centre into it once.
+   */
   offsetMm: number;
   widthMm: number;
   heightMm: number;
-  /** 0 for doors, ~900 for windows. */
+  /** Above the **floor datum**, not the wall base. 0 for doors, 914 for windows. */
   sillMm: number;
   kind: OpeningKind;
   swing?: {

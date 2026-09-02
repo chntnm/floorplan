@@ -153,3 +153,89 @@ describe('flaggedPlacements', () => {
     expect(flaggedPlacements(validateFloor(d, d.floors[0]!)).size).toBe(0);
   });
 });
+
+describe('openings', () => {
+  const wall = {
+    id: 'w1',
+    a: { x: 0, y: 0 },
+    b: { x: 3000, y: 0 },
+    thicknessMm: 114,
+    heightMm: 2438,
+    baseElevationMm: 0,
+  };
+
+  const door = {
+    id: 'o1',
+    wallId: 'w1',
+    offsetMm: 1000,
+    widthMm: 813,
+    heightMm: 2032,
+    sillMm: 0,
+    kind: 'door' as const,
+  };
+
+  it('says nothing about an opening that fits', () => {
+    const d = doc();
+    d.floors[0]!.walls = [wall];
+    d.floors[0]!.openings = [door];
+    expect(validateFloor(d, d.floors[0]!)).toEqual([]);
+  });
+
+  it('reports a door left hanging past the end of a shortened wall', () => {
+    // Dragging a wall shorter does not re-clamp its openings, deliberately — being
+    // told beats having your front door silently slid along the wall.
+    const d = doc();
+    d.floors[0]!.walls = [{ ...wall, b: { x: 1500, y: 0 } }];
+    d.floors[0]!.openings = [door];
+
+    const issues = validateFloor(d, d.floors[0]!);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.kind).toBe('opening-fit');
+    expect(issues[0]!.refs).toContainEqual({ kind: 'opening', id: 'o1' });
+  });
+
+  it('reports two openings overlapping in the same wall', () => {
+    // The geometry merges them into one gap, so without this the user gets a wider
+    // doorway than either door they placed and no clue why.
+    const d = doc();
+    d.floors[0]!.walls = [wall];
+    d.floors[0]!.openings = [door, { ...door, id: 'o2', offsetMm: 1400 }];
+
+    const issues = validateFloor(d, d.floors[0]!);
+    expect(issues.map((i) => i.kind)).toEqual(['opening-overlap']);
+  });
+
+  it('does not report two openings that merely touch', () => {
+    const d = doc();
+    d.floors[0]!.walls = [wall];
+    d.floors[0]!.openings = [door, { ...door, id: 'o2', offsetMm: 1813 }];
+    expect(validateFloor(d, d.floors[0]!)).toEqual([]);
+  });
+
+  it('reports a placement mounted on a wall that is gone', () => {
+    // Unlike a surface mount, a wall mount keeps its stored elevation whether or not
+    // the wall exists, so nothing else would ever notice.
+    const d = withItems(['bookcase']);
+    d.floors[0]!.placements = [
+      { ...place('bookcase', { x: 0, y: 0 }), mount: { kind: 'wall', wallId: 'gone' }, elevation: 0 },
+    ];
+
+    const issues = validateFloor(d, d.floors[0]!);
+    expect(issues.some((i) => i.kind === 'broken-mount' && i.message.includes('wall'))).toBe(true);
+  });
+});
+
+describe('hanging from the ceiling', () => {
+  it('reports an item whose drop sinks it through the floor', () => {
+    // elevation = ceiling - drop - height, which goes negative for anything tall
+    // enough. `solidSpan` will not object, so nothing else would catch it.
+    const d = withItems(['bookcase']); // 3000 tall, in a 2438 room
+    d.floors[0]!.placements = [
+      { ...place('bookcase', { x: 0, y: 0 }), mount: { kind: 'ceiling', drop: 0 } },
+    ];
+
+    const issues = validateFloor(d, d.floors[0]!);
+    const sunk = issues.find((i) => i.kind === 'below-floor');
+    expect(sunk?.message).toContain('562mm below the floor');
+  });
+});

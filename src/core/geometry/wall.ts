@@ -104,6 +104,31 @@ export function hitsWall(wall: WallLine, p: Vec2, toleranceMm: number): boolean 
   return distanceToSegment(p, wall.a, wall.b) <= wall.thicknessMm / 2 + toleranceMm;
 }
 
+/**
+ * The wall whose body is under a point, nearest first.
+ *
+ * Nearest rather than first-match: walls overlap at every corner (joins are butt
+ * joins, so there is a small overlap on the inside of each), and clicking a corner
+ * should address the wall you are pointing at rather than whichever was drawn first.
+ */
+export function nearestWall<T extends WallLine>(
+  walls: readonly T[],
+  p: Vec2,
+  toleranceMm: number,
+): T | undefined {
+  let best: T | undefined;
+  let bestDistance = Infinity;
+  for (const wall of walls) {
+    if (isDegenerate(wall)) continue;
+    const d = distanceToSegment(p, wall.a, wall.b);
+    if (d <= wall.thicknessMm / 2 + toleranceMm && d < bestDistance) {
+      best = wall;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
 /** Every distinct endpoint across a set of walls — the candidate set for snapping. */
 export function wallEndpoints(walls: readonly WallLine[]): Vec2[] {
   const seen = new Set<string>();

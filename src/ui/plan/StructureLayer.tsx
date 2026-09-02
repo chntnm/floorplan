@@ -104,7 +104,11 @@ export function StructureLayer({
   onGrabEndpoint,
 }: Props) {
   const layerRef = useRef<Konva.Layer>(null);
-  useSyncHitGraph(layerRef, interactive, floor.walls.length + floor.rooms.length);
+  useSyncHitGraph(
+    layerRef,
+    interactive,
+    floor.walls.length + floor.rooms.length + floor.openings.length,
+  );
 
   // A wall being dragged renders from the preview; the document still has the
   // original until the pointer is released.
@@ -190,15 +194,25 @@ export function StructureLayer({
           const p = docToScreen(viewport, { x: quad[i]!, y: quad[i + 1]! });
           screen.push(p.x, p.y);
         }
+        const selected = isSelected(selection, 'opening', opening.id);
         return (
           <Line
             key={opening.id}
             points={screen}
             closed
             fill={theme.openingFill}
-            stroke={theme.wallStroke}
-            strokeWidth={0.75}
-            listening={false}
+            stroke={selected ? theme.selection : theme.wallStroke}
+            strokeWidth={selected ? 2 : 0.75}
+            onMouseDown={(e) => {
+              // Above the wall it sits in, so clicking a doorway addresses the
+              // doorway. Same rule as everywhere else in this layer: a
+              // non-selectable click is not cancelled, so the armed tool still
+              // sees it — which is what lets the opening tool drop a second door
+              // on a wall that already has one.
+              if (!selectable) return;
+              e.cancelBubble = true;
+              onSelect({ kind: 'opening', id: opening.id }, e.evt.shiftKey);
+            }}
           />
         );
       })}

@@ -7,6 +7,7 @@ import { activeFloor, useStore } from '../state/store';
 import {
   deleteSelection,
   nudgeBackgroundRotation,
+  updateOpening,
   removeBackground,
   rotatePlacementBy,
   setBackgroundLocked,
@@ -19,7 +20,16 @@ import { resolveElevation, roomAt, surfaceHeight } from '../core/placement';
 import { ROTATION_STEP_DEG } from '../core/placement-snap';
 import { validateFloor, type Issue } from '../core/validation';
 import { backgroundExtentMm, isCalibrated } from '../core/calibration';
+import {
+  OPENING_KINDS,
+  OPENING_KIND_LABELS,
+  OPENING_DEFAULTS,
+  openingRange,
+  openingSpan,
+} from '../core/openings';
 import { hasAsset } from '../state/assets';
+import { LengthInput } from './LengthField';
+import type { OpeningKind } from '../core/document';
 
 const MOUNT_LABELS: Record<string, string> = {
   floor: 'On the floor',
@@ -70,6 +80,9 @@ export function PropertiesPanel() {
 
   const wall = only?.kind === 'wall' ? floor.walls.find((w) => w.id === only.id) : undefined;
   const room = only?.kind === 'room' ? floor.rooms.find((r) => r.id === only.id) : undefined;
+  const opening =
+    only?.kind === 'opening' ? floor.openings.find((o) => o.id === only.id) : undefined;
+  const openingWall = opening ? floor.walls.find((w) => w.id === opening.wallId) : undefined;
   const placement =
     only?.kind === 'placement' ? floor.placements.find((p) => p.id === only.id) : undefined;
   const placementItem = placement ? findItem(doc, placement.itemId) : undefined;
@@ -122,6 +135,81 @@ export function PropertiesPanel() {
           <Field label="Area" value={formatArea(room.areaMm2, unit)} />
           <Field label="Ceiling" value={formatLength(room.ceilingHeightMm, unit)} />
           <Field label="Vertices" value={String(room.boundary.pts.length)} />
+        </div>
+      ) : null}
+
+      {opening ? (
+        <div data-testid="opening-properties">
+          <label className="field field--input">
+            <span className="field__label">Kind</span>
+            <select
+              value={opening.kind}
+              aria-label="Opening kind"
+              onChange={(e) => {
+                // Changing kind re-sizes to that kind's standard, unless the opening
+                // has already been sized by hand — a door resized to 900 should not
+                // silently snap back to 813 because it became a pocket door.
+                const next = e.target.value as OpeningKind;
+                const current = OPENING_DEFAULTS[opening.kind];
+                const custom =
+                  opening.widthMm !== current.widthMm ||
+                  opening.heightMm !== current.heightMm ||
+                  opening.sillMm !== current.sillMm;
+                updateOpening(opening.id, custom ? { kind: next } : { kind: next, ...OPENING_DEFAULTS[next] });
+              }}
+            >
+              {OPENING_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {OPENING_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <LengthInput
+            label="Width"
+            valueMm={opening.widthMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { widthMm: mm })}
+            testId="opening-width"
+          />
+          <LengthInput
+            label="Height"
+            valueMm={opening.heightMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { heightMm: mm })}
+          />
+          <LengthInput
+            label="Sill"
+            valueMm={opening.sillMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { sillMm: mm })}
+          />
+          {/* Position along the wall, measured from its first end — the coordinate
+              `offsetMm` is actually stored in, so the number here is the number in
+              the file. */}
+          <LengthInput
+            label="From wall start"
+            valueMm={opening.offsetMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { offsetMm: mm })}
+          />
+          <Field
+            label="Wall"
+            value={
+              openingWall
+                ? `${formatLength(wallLength(openingWall), unit)} long`
+                : 'missing'
+            }
+          />
+          {/* Head height — sill plus height. The number that decides whether you
+              can walk under it, and the one that is easiest to get wrong by editing
+              the sill of a window without touching its height. */}
+          <Field label="Head" value={formatLength(openingSpan(opening).top, unit)} />
+          <Field
+            label="Ends at"
+            value={formatLength(openingRange(opening).to, unit)}
+          />
         </div>
       ) : null}
 

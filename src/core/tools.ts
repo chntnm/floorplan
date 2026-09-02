@@ -23,13 +23,14 @@ import { area, ensureCounterClockwise, polygon, roundPolygon, translate } from '
 import { isDegenerate } from './geometry/wall';
 import type { Vec2 } from './geometry/vec';
 
-export const PLAN_TOOLS = ['select', 'wall', 'room', 'shape', 'dimension'] as const;
+export const PLAN_TOOLS = ['select', 'wall', 'room', 'opening', 'shape', 'dimension'] as const;
 export type PlanTool = (typeof PLAN_TOOLS)[number];
 
 export const PLAN_TOOL_LABELS: Record<PlanTool, string> = {
   select: 'Select',
   wall: 'Wall',
   room: 'Room',
+  opening: 'Opening',
   shape: 'Shape',
   dimension: 'Measure',
 };
@@ -39,6 +40,7 @@ export const PLAN_TOOL_KEYS: Record<PlanTool, string> = {
   select: 'v',
   wall: 'w',
   room: 'r',
+  opening: 'o',
   shape: 's',
   dimension: 'd',
 };

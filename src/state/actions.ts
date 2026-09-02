@@ -6,7 +6,19 @@
  * one committed from a test take exactly the same path.
  */
 
-import type { AssetRef, Background, CatalogItem, Id, Placement, Room, Wall } from '../core/document';
+import type {
+  AssetRef,
+  Background,
+  CatalogItem,
+  Id,
+  Opening,
+  OpeningKind,
+  Placement,
+  Room,
+  Wall,
+} from '../core/document';
+import { createOpening, type OpeningDefaults } from '../core/openings';
+import { nearestWall, projectOntoWall } from '../core/geometry/wall';
 import { createCatalogItem, type ItemDraft } from '../core/catalog';
 import { snapPlacement, snapRotation, type PlacementSnapContext } from '../core/placement-snap';
 import { worldOutline } from '../core/placement';
@@ -89,20 +101,28 @@ export function addShapeRoom(kind: ShapeKind, start: Vec2, end: Vec2): Room | nu
 /**
  * Delete a selection.
  *
- * Openings hosted on a deleted wall go with it — an opening with a dangling `wallId`
- * has no position, no host to cut and nothing that could render it.
+ * Deleting a wall takes three things with it, and every one of them is a reference
+ * that would otherwise dangle:
  *
- * Anything surface-mounted on a deleted placement is re-seated on the floor in the
- * same mutation. `resolveElevation` already degrades a dangling host to zero, which
- * is the right *failure* but the wrong *result*: the lamp would sit at floor level
- * while still claiming to be on a nightstand, and undo would have to put both back.
- * Making it explicit means the document is never left referencing something gone.
+ *  - **Openings on it** — an opening with a dangling `wallId` has no position, no
+ *    host to cut and nothing that could render it.
+ *  - **Wall-mounted placements** — a shelf whose wall is gone is re-seated on the
+ *    floor. `resolveElevation` returns the stored elevation for a wall mount without
+ *    checking the wall still exists, so leaving it would hang the shelf in mid-air.
+ *  - **Surface children of deleted placements** — the same fix one level down.
+ *    `resolveElevation` already degrades a dangling host to zero, which is the right
+ *    *failure* but the wrong *result*: the lamp would sit at floor level while still
+ *    claiming to be on a nightstand, and undo would have to put both back.
+ *
+ * Doing it here rather than tolerating it downstream means the document is never left
+ * referencing something that is gone.
  */
 export function deleteSelection(selection: readonly SelectionRef[]): void {
   if (selection.length === 0) return;
 
   const wallIds = new Set(selection.filter((s) => s.kind === 'wall').map((s) => s.id));
   const roomIds = new Set(selection.filter((s) => s.kind === 'room').map((s) => s.id));
+  const openingIds = new Set(selection.filter((s) => s.kind === 'opening').map((s) => s.id));
   const placementIds = new Set(selection.filter((s) => s.kind === 'placement').map((s) => s.id));
 
   const label = selection.length === 1 ? `Delete ${selection[0]!.kind}` : `Delete ${selection.length} items`;
@@ -110,16 +130,82 @@ export function deleteSelection(selection: readonly SelectionRef[]): void {
   useStore.getState().mutate(label, (draft) => {
     for (const floor of draft.floors) {
       floor.walls = floor.walls.filter((w) => !wallIds.has(w.id));
-      floor.openings = floor.openings.filter((o) => !wallIds.has(o.wallId));
+      floor.openings = floor.openings.filter(
+        (o) => !openingIds.has(o.id) && !wallIds.has(o.wallId),
+      );
       floor.rooms = floor.rooms.filter((r) => !roomIds.has(r.id));
       floor.placements = floor.placements.filter((p) => !placementIds.has(p.id));
 
       for (const placement of floor.placements) {
-        if (placement.mount.kind === 'surface' && placementIds.has(placement.mount.hostId)) {
+        const orphanedHost =
+          placement.mount.kind === 'surface' && placementIds.has(placement.mount.hostId);
+        const orphanedWall = placement.mount.kind === 'wall' && wallIds.has(placement.mount.wallId);
+        if (orphanedHost || orphanedWall) {
           placement.mount = { kind: 'floor' };
           placement.elevation = 0;
         }
       }
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Openings (PLAN.md §4.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Put an opening in the wall nearest a clicked point.
+ *
+ * The click is projected onto the wall's centreline and taken as the *centre* of the
+ * opening, which is where a person pointing at a wall means the door to be. Returns
+ * null when the click was not on a wall; throws `OpeningError`, with a message meant
+ * to be shown, when the wall cannot hold the opening at all.
+ */
+export function addOpening(
+  at: Vec2,
+  kind: OpeningKind,
+  toleranceMm: number,
+  size?: Partial<OpeningDefaults>,
+): Opening | null {
+  const state = useStore.getState();
+  const floor = activeFloor(state);
+  const wall = nearestWall(floor.walls, at, toleranceMm);
+  if (!wall) return null;
+
+  const opening = createOpening({
+    id: newId(),
+    wall,
+    kind,
+    centreMm: projectOntoWall(wall, at),
+    ...(size ? { size } : {}),
+  });
+
+  const floorId = floor.id;
+  useStore.getState().mutate(`Add ${kind}`, (draft) => {
+    const target = draft.floors.find((f) => f.id === floorId);
+    if (target) target.openings.push(opening);
+  });
+  return opening;
+}
+
+/**
+ * Edit an opening's size or position along its wall.
+ *
+ * Deliberately does **not** clamp to the wall. A number typed into the panel is what
+ * the user meant, and quietly moving their front door to make it fit would hide the
+ * mistake; validation reports an opening that no longer fits and the geometry simply
+ * does not build it.
+ */
+export function updateOpening(openingId: Id, patch: Partial<Omit<Opening, 'id' | 'wallId'>>): void {
+  useStore.getState().mutate('Edit opening', (draft) => {
+    for (const floor of draft.floors) {
+      const opening = floor.openings.find((o) => o.id === openingId);
+      if (!opening) continue;
+      if (patch.kind !== undefined) opening.kind = patch.kind;
+      if (patch.offsetMm !== undefined) opening.offsetMm = Math.round(patch.offsetMm);
+      if (patch.widthMm !== undefined) opening.widthMm = Math.max(1, Math.round(patch.widthMm));
+      if (patch.heightMm !== undefined) opening.heightMm = Math.max(1, Math.round(patch.heightMm));
+      if (patch.sillMm !== undefined) opening.sillMm = Math.max(0, Math.round(patch.sillMm));
     }
   });
 }
