@@ -167,11 +167,30 @@ test.describe('hanging the leaf', () => {
     await expect(page.getByTestId('opening-properties')).toContainText('at wall start');
   });
 
-  test('narrows the swing to an angle a door can actually open to', async ({ page }) => {
+  test('takes an angle typed a digit at a time', async ({ page }) => {
+    // Typed rather than filled. The stored angle is clamped at 15, so a field that
+    // wrote per keystroke would turn the `1` of `135` into `15` and swallow the rest
+    // — and `fill` is the one input path that never notices, because it delivers the
+    // whole value in a single change event.
+    await roomWithDoor(page);
+
+    const angle = page.getByTestId('swing-angle');
+    await angle.selectText();
+    await angle.pressSequentially('135');
+    await angle.press('Enter');
+    await expect(angle).toHaveValue('135');
+
+    // And one undo step for the whole edit, not one per character.
+    await page.keyboard.press('Control+z');
+    await expect(angle).toHaveValue('90');
+  });
+
+  test('clamps an angle no door could open to', async ({ page }) => {
     await roomWithDoor(page);
 
     const angle = page.getByTestId('swing-angle');
     await angle.fill('500');
+    await angle.press('Enter');
     await expect(angle).toHaveValue('180');
   });
 

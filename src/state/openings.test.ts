@@ -222,6 +222,18 @@ describe('hanging a door', () => {
     expect(floor().openings[0]!.swing!.angleDeg).toBe(180);
   });
 
+  it('costs one undo entry per committed angle, not one per digit', () => {
+    // The clamp is why the panel holds the text locally: writing per keystroke would
+    // store `1` as `15` and then type the rest against that, as well as filling the
+    // undo stack. This is the store half of that contract.
+    const opening = door();
+    const before = useStore.getState().past.length;
+
+    setOpeningSwing(opening.id, { angleDeg: 135 });
+    expect(useStore.getState().past).toHaveLength(before + 1);
+    expect(floor().openings[0]!.swing!.angleDeg).toBe(135);
+  });
+
   it('is one undo step per change', () => {
     const opening = door();
     const before = useStore.getState().past.length;

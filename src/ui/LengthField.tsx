@@ -101,3 +101,72 @@ export function LengthInput({
     </label>
   );
 }
+
+/**
+ * A whole number bound to the document, committed on blur or Enter.
+ *
+ * The same contract as `LengthInput`, and needed for the same two reasons plus a
+ * third that only bites when the stored value is clamped. A swing angle is held
+ * between 15° and 180°, so writing per keystroke means typing `135` sends `1`, which
+ * is stored as `15`, which re-renders the controlled input as "15" — and the next
+ * keystroke lands against that. No angle whose first digit is below the floor can be
+ * typed at all. Holding the text locally is what lets a number be half-typed.
+ *
+ * Anything unreadable reverts rather than becoming zero, and Escape abandons.
+ */
+export function NumberInput({
+  label,
+  value,
+  onCommit,
+  min,
+  max,
+  suffix,
+  testId,
+}: {
+  label: string;
+  value: number;
+  onCommit: (next: number) => void;
+  min?: number;
+  max?: number;
+  suffix?: string;
+  testId?: string;
+}) {
+  const stored = String(value);
+  const [text, setText] = useState(stored);
+
+  useEffect(() => setText(stored), [stored]);
+
+  const commit = () => {
+    const parsed = Number(text.trim());
+    if (text.trim() === '' || !Number.isFinite(parsed)) {
+      setText(stored);
+      return;
+    }
+    if (parsed !== value) onCommit(parsed);
+    else setText(stored); // a clamped commit that changed nothing still redraws
+  };
+
+  return (
+    <label className="field field--input">
+      <span className="field__label">{label}</span>
+      <input
+        type="number"
+        value={text}
+        aria-label={label}
+        {...(min === undefined ? {} : { min })}
+        {...(max === undefined ? {} : { max })}
+        {...(testId ? { 'data-testid': testId } : {})}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            setText(stored);
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      {suffix ? <span className="field__hint">{suffix}</span> : null}
+    </label>
+  );
+}

@@ -38,7 +38,7 @@ import {
   movingLeafOf,
 } from '../core/swing';
 import { hasAsset } from '../state/assets';
-import { LengthInput } from './LengthField';
+import { LengthInput, NumberInput } from './LengthField';
 import type { MountKind, Opening, OpeningKind } from '../core/document';
 
 const MOUNT_LABELS: Record<string, string> = {
@@ -100,19 +100,15 @@ function OpeningSwing({ opening }: { opening: Opening }) {
       </div>
       <Field label="Hinged" value={leaf.pivot === 'a' ? 'at wall start' : 'at wall end'} />
       {leaf.style === 'hinged' ? (
-        <label className="field field--input">
-          <span className="field__label">Swing angle</span>
-          <input
-            type="number"
-            value={leaf.angleDeg}
-            min={MIN_SWING_DEG}
-            max={MAX_SWING_DEG}
-            step={5}
-            aria-label="Swing angle in degrees"
-            data-testid="swing-angle"
-            onChange={(e) => setOpeningSwing(opening.id, { angleDeg: Number(e.target.value) })}
-          />
-        </label>
+        <NumberInput
+          label="Swing angle"
+          value={leaf.angleDeg}
+          min={MIN_SWING_DEG}
+          max={MAX_SWING_DEG}
+          suffix="degrees"
+          onCommit={(deg) => setOpeningSwing(opening.id, { angleDeg: deg })}
+          testId="swing-angle"
+        />
       ) : null}
     </div>
   );
