@@ -505,13 +505,16 @@ points quickly — which is how anyone draws — ends the chain at the second po
 Clicking the same spot twice is the gesture people actually mean, and it needs no
 timer; Enter and closing the loop also finish.
 
-**`listening` does not take effect until the next draw.** Konva keeps hit-test
-geometry in a separate canvas that is only refreshed when the layer is drawn, so a
-layer switched on and clicked within the same frame is still deaf — pick Select and
-click a wall fast enough and nothing happens. Two consequences, both load-bearing:
-the *tool* is checked inside the shape handlers rather than by toggling `listening`,
-and the *mode* switch calls `drawHit()` from a layout effect so the hit graph is
-rebuilt before the browser paints.
+**The hit graph does not take effect until the next draw.** Konva keeps hit-test
+geometry in a separate canvas that is only refreshed when the layer is drawn, so
+anything changing what is hittable is invisible to a click arriving in the same
+frame. Two triggers, both load-bearing: a layer switched on is still deaf (pick
+Select and click a wall fast enough and nothing happens), and a shape that first
+appeared this frame is not in the hit canvas yet (place an item, click it straight
+away, and it does not select). Three consequences: the *tool* is checked inside the
+shape handlers rather than by toggling `listening`; the *mode* switch calls
+`drawHit()` from a layout effect; and so does a change in the number of shapes on a
+layer.
 
 **Nothing above the canvas may change height during a gesture.** The calibration gate
 is a band directly above the stage; an early version swapped a one-line prompt for the
@@ -696,7 +699,7 @@ isolated so neither blocks the core editor.
 | **1** | **Geometry core** — units, mm integers, polygon primitive, all generators, rotation/transform, area, SAT + clipping overlap, vertical intervals. Pure functions, no UI, heavily tested. Document model + `.space` read/write + migration hook. Round-trips a hand-authored fixture. |
 | **2** | **Plan editor** — Konva stage, pan/zoom, wall/room/shape tools, dimension tool, grid + snapping, selection and transform (wall endpoint and body drag), mode toggle, undo/redo. Draw a floor plan by hand and save it. Room *reposition* is deliberately not included: rooms and their walls are separate entities, and moving one without the other desynchronises them — redraw instead until phase 8 relates them. |
 | **3** | **Import + calibration** — PDF via pdfjs (dynamically imported, so the 437kB renderer stays off first paint), image import, the blocking calibration gate, background transform/opacity/lock, tracing over a real plan. An uncalibrated background is shown at a nominal 6m width so the reference line is drawable *and* so the transform is invertible before a real scale exists; calibrating rescales about `refA` so the point the user anchored on does not move, and `transform.position` stays a float because rounding it would drift the anchor on every recalibration. Import deliberately does not re-fit the viewport. Deferred: thumbnails and File System Access (phase 9), vector path extraction (v2). |
-| **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap and overlap warnings. **First genuinely useful build.** |
+| **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap, surface snap, rotation, and 3D overlap warnings. **First genuinely useful build.** Wall snap seats the footprint's *back edge* (local −y) on the wall's near face and rotates to match, never the centre on the centreline. The calibration gate stops being decorative here: `addPlacement` throws `PlacementBlockedError` carrying the same sentence the validation panel shows, and the Place button is disabled rather than offered-and-refused. Deleting a placement re-seats anything surface-mounted on it, so the document never references a host that is gone. Headroom arrives early — `exceedsHeadroom` already existed — but clearance zones (7) and door swing (6) are still out. |
 | **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. |
 | **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. |
 | **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. |

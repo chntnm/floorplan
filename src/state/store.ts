@@ -40,6 +40,8 @@ import type { EditMode, ViewMode } from '../core/modes';
 import { bounds, type Bounds } from '../core/geometry/polygon';
 import { wallOutline } from '../core/geometry/wall';
 import type { Vec2 } from '../core/geometry/vec';
+import type { Mount } from '../core/document';
+import type { PlacementSnapHint } from '../core/placement-snap';
 import type { AssetMap } from '../core/space-file';
 import { adoptAssets, clearAssets } from './assets';
 
@@ -85,6 +87,27 @@ export type Measurement = { from: { x: number; y: number }; to: { x: number; y: 
  * the document means an abandoned calibration leaves no undo entry behind.
  */
 export type CalibrationRef = { a: Vec2; b: Vec2 };
+
+/**
+ * A placement being dragged or turned, held as preview state in the editor slice.
+ *
+ * Exactly the same shape of solution as `WallTransform`, and for the same reason: the
+ * document keeps the original until the pointer is released, so a drag across the
+ * whole plan is one undo step rather than four hundred. `origin` makes a move
+ * absolute — deriving each frame from the last accumulates the error the snap keeps
+ * correcting.
+ */
+export type PlacementTransform = {
+  placementId: Id;
+  mode: 'move' | 'rotate';
+  /** Where the drag started, in document mm. */
+  grab: Vec2;
+  origin: { position: Vec2; rotation: number };
+  position: Vec2;
+  rotation: number;
+  mount: Mount;
+  hints: PlacementSnapHint[];
+};
 
 /**
  * A wall being dragged, held as preview geometry in the editor slice.
@@ -150,6 +173,15 @@ export type StoreState = {
   calibrating: boolean;
   /** The reference line being drawn, or the finished one awaiting its real length. */
   calibrationRef: CalibrationRef | null;
+  /** The placement drag in flight, if any. */
+  placementTransform: PlacementTransform | null;
+  /**
+   * The catalog item armed for placing — the next click on the plan drops one.
+   *
+   * Held rather than entered as a tool because the gesture starts in the inventory
+   * list: you pick the thing you want, then you point at where it goes.
+   */
+  placingItemId: Id | null;
 
   setEditMode: (mode: EditMode) => void;
   setViewMode: (mode: ViewMode) => void;
@@ -166,6 +198,8 @@ export type StoreState = {
   setSnapSuppressed: (on: boolean) => void;
   setMeasurement: (m: Measurement | null) => void;
   setTransform: (t: WallTransform | null) => void;
+  setPlacementTransform: (t: PlacementTransform | null) => void;
+  setPlacingItem: (itemId: Id | null) => void;
   beginCalibration: () => void;
   setCalibrationRef: (ref: CalibrationRef | null) => void;
   endCalibration: () => void;
@@ -268,6 +302,7 @@ export const useStore = create<StoreState>((set, get) => ({
       selection: pruneSelection(next, selection),
       draft: null,
       transform: null,
+      placementTransform: null,
     });
   },
 
@@ -307,6 +342,8 @@ export const useStore = create<StoreState>((set, get) => ({
       snapHints: [],
       calibrating: false,
       calibrationRef: null,
+      placementTransform: null,
+      placingItemId: null,
     });
   },
 
@@ -325,6 +362,8 @@ export const useStore = create<StoreState>((set, get) => ({
       snapHints: [],
       calibrating: false,
       calibrationRef: null,
+      placementTransform: null,
+      placingItemId: null,
       viewport: DEFAULT_VIEWPORT,
     });
   },
@@ -350,6 +389,8 @@ export const useStore = create<StoreState>((set, get) => ({
   transform: null,
   calibrating: false,
   calibrationRef: null,
+  placementTransform: null,
+  placingItemId: null,
 
   setEditMode: (editMode) =>
     // Structure tools have no meaning in furnish mode, and a half-drawn wall would
@@ -358,12 +399,15 @@ export const useStore = create<StoreState>((set, get) => ({
       editMode,
       draft: null,
       transform: null,
+      placementTransform: null,
+      placingItemId: null,
       selection: [],
       tool: editMode === 'plan' ? get().tool : 'select',
     }),
 
   setViewMode: (viewMode) => set({ viewMode }),
-  setTool: (tool) => set({ tool, draft: null, transform: null, measurement: null }),
+  setTool: (tool) =>
+    set({ tool, draft: null, transform: null, placementTransform: null, measurement: null }),
   setShapeKind: (shapeKind) => set({ shapeKind, tool: 'shape', draft: null }),
   setViewport: (viewport) => set({ viewport }),
   setStageSize: (stageSize) => set({ stageSize }),
@@ -386,11 +430,23 @@ export const useStore = create<StoreState>((set, get) => ({
   setSnapSuppressed: (snapSuppressed) => set({ snapSuppressed }),
   setMeasurement: (measurement) => set({ measurement }),
   setTransform: (transform) => set({ transform }),
+  setPlacementTransform: (placementTransform) => set({ placementTransform }),
+  // Arming an item cancels a selection drag and vice versa: the next click cannot
+  // both drop a new item and grab an existing one.
+  setPlacingItem: (placingItemId) => set({ placingItemId, placementTransform: null }),
 
   // Opening the gate cancels whatever was in flight: a half-drawn wall committed
   // against an uncalibrated plan is exactly the geometry the gate exists to stop.
   beginCalibration: () =>
-    set({ calibrating: true, calibrationRef: null, draft: null, transform: null, selection: [] }),
+    set({
+      calibrating: true,
+      calibrationRef: null,
+      draft: null,
+      transform: null,
+      placementTransform: null,
+      placingItemId: null,
+      selection: [],
+    }),
   setCalibrationRef: (calibrationRef) => set({ calibrationRef }),
   endCalibration: () => set({ calibrating: false, calibrationRef: null }),
 

@@ -544,3 +544,144 @@ body {
   padding: 6px 8px;
   font-size: 12px;
 }
+
+/* ---------- inventory (PLAN.md 7) ---------- */
+
+.items {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.item {
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+/* The armed item is the answer to "what am I about to place?", so it has to be
+   visible from the canvas, where the user is actually looking. */
+.item[data-armed='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.item__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.item__name {
+  font-weight: 600;
+}
+
+.item__count {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.item__meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.item__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.item__qty {
+  font: inherit;
+  width: 52px;
+  margin-left: auto;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.itemform {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.field__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 56px;
+  text-align: right;
+}
+
+.panel__note {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.panel__row--rotate {
+  align-items: center;
+}
+
+.panel__row--rotate .field__value {
+  flex: 1 1 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- validation ---------- */
+
+.issues {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.issue__button {
+  appearance: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 7px 9px;
+  border: 0;
+  border-left: 2px solid var(--text-dim);
+  border-radius: 0 4px 4px 0;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.issue__button:disabled {
+  cursor: default;
+}
+
+.issue[data-severity='warning'] .issue__button {
+  border-left-color: #d08a2c;
+}
+
+.issue[data-severity='blocking'] .issue__button {
+  border-left-color: #c0392b;
+}

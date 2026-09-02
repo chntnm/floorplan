@@ -15,13 +15,21 @@ import { PLAN_TOOL_KEYS, PLAN_TOOLS, type PlanTool } from '../../core/tools';
 import { panBy, pxToMm, screenToDoc, zoomAt } from '../../core/viewport';
 import { activeFloor, documentGridMm, useStore, type SelectionRef } from '../../state/store';
 import {
+  addPlacement,
   addRoomRect,
   addShapeRoom,
   addWallChain,
+  commitPlacementTransform,
   commitWallTransform,
   deleteSelection,
+  placementSnapContext,
+  previewPlacementTransform,
   previewWallTransform,
+  rotatePlacementBy,
 } from '../../state/actions';
+import { PlacementBlockedError } from '../../core/calibration';
+import { flaggedPlacements, validateFloor } from '../../core/validation';
+import { ROTATION_STEP_DEG, snapPlacement } from '../../core/placement-snap';
 import { BackgroundLayer } from './BackgroundLayer';
 import { DraftLayer } from './DraftLayer';
 import { GridLayer } from './GridLayer';
@@ -81,6 +89,8 @@ export function PlanStage() {
     transform,
     calibrating,
     calibrationRef,
+    placementTransform,
+    placingItemId,
   } = useStore(
     useShallow((s) => ({
       doc: s.doc,
@@ -96,6 +106,8 @@ export function PlanStage() {
       transform: s.transform,
       calibrating: s.calibrating,
       calibrationRef: s.calibrationRef,
+      placementTransform: s.placementTransform,
+      placingItemId: s.placingItemId,
     })),
   );
 
@@ -120,6 +132,10 @@ export function PlanStage() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // The validation pass is the only thing here that walks every placement against
+  // every other, so it is memoized on the document rather than run per render.
+  const flagged = useMemo(() => flaggedPlacements(validateFloor(doc, floor)), [doc, floor]);
 
   // ---- snapping ----------------------------------------------------------
   const snapCandidates = useMemo(() => {
@@ -189,6 +205,72 @@ export function PlanStage() {
     });
   };
 
+  /** The raw (unsnapped) document point under the pointer. */
+  const rawAt = (stage: Konva.Stage): Vec2 | null => {
+    const pos = stage.getPointerPosition();
+    return pos ? screenToDoc(useStore.getState().viewport, pos) : null;
+  };
+
+  /** The snap context for whichever item a placement gesture concerns. */
+  const snapCtxFor = (itemId: string, excludePlacementId?: string) =>
+    placementSnapContext(itemId, {
+      toleranceMm: pxToMm(useStore.getState().viewport, DEFAULT_SNAP_TOLERANCE_PX),
+      ...(excludePlacementId ? { excludePlacementId } : {}),
+    });
+
+  /** Begin a placement drag. The document is untouched until the pointer is released. */
+  const beginPlacementTransform = (placementId: string, mode: 'move' | 'rotate') => {
+    const state = useStore.getState();
+    const placement = activeFloor(state).placements.find((p) => p.id === placementId);
+    const grab = state.cursor;
+    if (!placement || !grab) return;
+
+    state.setPlacementTransform({
+      placementId,
+      mode,
+      grab,
+      origin: { position: placement.position, rotation: placement.rotation },
+      position: placement.position,
+      rotation: placement.rotation,
+      mount: placement.mount,
+      hints: [],
+    });
+  };
+
+  /**
+   * Drop the armed item where the pointer is.
+   *
+   * The gate is enforced here rather than in the UI so it cannot be routed around:
+   * `addPlacement` throws, and the message it throws is the same sentence the
+   * validation panel shows.
+   */
+  const dropArmedItem = (stage: Konva.Stage) => {
+    const state = useStore.getState();
+    const itemId = state.placingItemId;
+    if (!itemId) return;
+
+    const raw = rawAt(stage);
+    if (!raw) return;
+
+    const ctx = snapCtxFor(itemId);
+    const snapped = ctx ? snapPlacement(raw, 0, ctx) : null;
+
+    try {
+      const placement = addPlacement(itemId, snapped?.position ?? raw, {
+        rotation: snapped?.rotation ?? 0,
+        ...(snapped ? { mount: snapped.mount } : {}),
+      });
+      if (placement) state.setSelection([{ kind: 'placement', id: placement.id }]);
+    } catch (err) {
+      if (err instanceof PlacementBlockedError) {
+        window.alert(err.message);
+        state.setPlacingItem(null);
+        return;
+      }
+      throw err;
+    }
+  };
+
   // ---- pointer -----------------------------------------------------------
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = e.target.getStage();
@@ -209,6 +291,14 @@ export function PlanStage() {
       const at = screenToDoc(useStore.getState().viewport, pos);
       calDrag.current = true;
       useStore.getState().setCalibrationRef({ a: at, b: at });
+      return;
+    }
+
+    // An armed item drops on the next left click anywhere on the canvas. Checked
+    // before the pan branch, because a click on empty canvas with Select is
+    // otherwise read as the start of a pan.
+    if (e.evt.button === 0 && useStore.getState().placingItemId) {
+      dropArmedItem(stage);
       return;
     }
 
@@ -299,6 +389,17 @@ export function PlanStage() {
     }
     if (store.calibrating) return;
 
+    const moving = store.placementTransform;
+    if (moving) {
+      const raw = rawAt(stage);
+      if (!raw) return;
+      const placement = activeFloor(store).placements.find((p) => p.id === moving.placementId);
+      const ctx = placement ? snapCtxFor(placement.itemId, placement.id) : null;
+      store.setCursor(raw);
+      store.setPlacementTransform(previewPlacementTransform(moving, raw, ctx));
+      return;
+    }
+
     const dragging = store.transform;
     const snapped = snapAt(stage, dragging && dragging.end !== 'both' ? undefined : draftAnchor());
     if (!snapped) return;
@@ -335,6 +436,13 @@ export function PlanStage() {
       return;
     }
     if (store.calibrating) return;
+
+    const moving = store.placementTransform;
+    if (moving) {
+      commitPlacementTransform(moving);
+      store.setPlacementTransform(null);
+      return;
+    }
 
     const dragging = store.transform;
     if (dragging) {
@@ -422,8 +530,21 @@ export function PlanStage() {
       if (e.key === 'Escape') {
         store.setDraft(null);
         store.setTransform(null);
+        store.setPlacementTransform(null);
+        store.setPlacingItem(null);
         store.clearSelection();
         lastClickPx.current = null;
+        return;
+      }
+      // Rotating from the keyboard, because the handle is a fine gesture and a poor
+      // way to hit exactly 90°.
+      if (e.key === '[' || e.key === ']') {
+        const selected = store.selection.filter((s) => s.kind === 'placement');
+        if (selected.length > 0) {
+          e.preventDefault();
+          const step = e.key === ']' ? ROTATION_STEP_DEG : -ROTATION_STEP_DEG;
+          for (const ref of selected) rotatePlacementBy(ref.id, step);
+        }
         return;
       }
       if (e.key === 'Enter') {
@@ -489,7 +610,7 @@ export function PlanStage() {
     <div
       ref={containerRef}
       className="planstage"
-      data-cursor={calibrating || DRAW_TOOLS.has(tool) ? 'draw' : 'select'}
+      data-cursor={calibrating || placingItemId || DRAW_TOOLS.has(tool) ? 'draw' : 'select'}
       data-testid="plan-stage"
     >
       <Stage
@@ -507,6 +628,10 @@ export function PlanStage() {
           if (store.transform) {
             commitWallTransform(store.transform);
             store.setTransform(null);
+          }
+          if (store.placementTransform) {
+            commitPlacementTransform(store.placementTransform);
+            store.setPlacementTransform(null);
           }
           store.setCursor(null);
         }}
@@ -554,7 +679,11 @@ export function PlanStage() {
           theme={theme}
           selection={selection}
           interactive={placementsInteractive}
+          selectable={placementsInteractive && !placingItemId}
+          transform={placementTransform}
+          flagged={flagged}
           onSelect={onSelect}
+          onGrab={beginPlacementTransform}
         />
 
         <DraftLayer

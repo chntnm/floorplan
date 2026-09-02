@@ -6,10 +6,16 @@
  * one committed from a test take exactly the same path.
  */
 
-import type { AssetRef, Background, Room, Wall } from '../core/document';
+import type { AssetRef, Background, CatalogItem, Id, Placement, Room, Wall } from '../core/document';
+import { createCatalogItem, type ItemDraft } from '../core/catalog';
+import { snapPlacement, snapRotation, type PlacementSnapContext } from '../core/placement-snap';
+import { worldOutline } from '../core/placement';
+import { findItem } from '../core/document';
+import { newId } from '../core/tools';
 import { commitRoomRect, commitShapeRoom, commitWallChain, type ShapeKind } from '../core/tools';
 import {
   applyCalibration,
+  assertAcceptsPlacements,
   clampOpacity,
   docToImage,
   rotateBackground,
@@ -20,6 +26,7 @@ import {
   activeFloor,
   useStore,
   type MutateOptions,
+  type PlacementTransform,
   type SelectionRef,
   type WallTransform,
 } from './store';
@@ -84,6 +91,12 @@ export function addShapeRoom(kind: ShapeKind, start: Vec2, end: Vec2): Room | nu
  *
  * Openings hosted on a deleted wall go with it — an opening with a dangling `wallId`
  * has no position, no host to cut and nothing that could render it.
+ *
+ * Anything surface-mounted on a deleted placement is re-seated on the floor in the
+ * same mutation. `resolveElevation` already degrades a dangling host to zero, which
+ * is the right *failure* but the wrong *result*: the lamp would sit at floor level
+ * while still claiming to be on a nightstand, and undo would have to put both back.
+ * Making it explicit means the document is never left referencing something gone.
  */
 export function deleteSelection(selection: readonly SelectionRef[]): void {
   if (selection.length === 0) return;
@@ -100,6 +113,13 @@ export function deleteSelection(selection: readonly SelectionRef[]): void {
       floor.openings = floor.openings.filter((o) => !wallIds.has(o.wallId));
       floor.rooms = floor.rooms.filter((r) => !roomIds.has(r.id));
       floor.placements = floor.placements.filter((p) => !placementIds.has(p.id));
+
+      for (const placement of floor.placements) {
+        if (placement.mount.kind === 'surface' && placementIds.has(placement.mount.hostId)) {
+          placement.mount = { kind: 'floor' };
+          placement.elevation = 0;
+        }
+      }
     }
   });
 }
@@ -292,4 +312,248 @@ export function moveBackground(position: Vec2): void {
 /** Rotate about the raster centre, so squaring a crooked scan does not fling it away. */
 export function nudgeBackgroundRotation(degrees: number): void {
   mutateBackground('Rotate floor plan', (bg) => rotateBackground(bg, degrees, backgroundCentre(bg)));
+}
+
+// ---------------------------------------------------------------------------
+// Catalog (PLAN.md §4.3, §7)
+// ---------------------------------------------------------------------------
+
+/** Add an item to the inventory. Throws `CatalogError` with a message to show. */
+export function addCatalogItem(draft: ItemDraft): CatalogItem {
+  const item = createCatalogItem(draft, newId());
+  useStore.getState().mutate(`Add ${item.name}`, (doc) => {
+    doc.catalog.push(item);
+  });
+  return item;
+}
+
+/**
+ * Edit an item in place, keeping its id.
+ *
+ * The id is what placements point at, so a rebuilt item must reuse it — replacing it
+ * would orphan every placement of that thing, which is precisely the coupling the
+ * catalog/placement split exists to make safe.
+ */
+export function updateCatalogItem(id: Id, draft: ItemDraft): CatalogItem {
+  const item = createCatalogItem(draft, id);
+  useStore.getState().mutate(`Edit ${item.name}`, (doc) => {
+    const index = doc.catalog.findIndex((i) => i.id === id);
+    if (index >= 0) doc.catalog[index] = item;
+  });
+  return item;
+}
+
+/** Remove an item and every placement of it — a placement with no item has no shape. */
+export function removeCatalogItem(id: Id): void {
+  const { doc } = useStore.getState();
+  const item = doc.catalog.find((i) => i.id === id);
+  if (!item) return;
+
+  useStore.getState().mutate(`Remove ${item.name}`, (draft) => {
+    draft.catalog = draft.catalog.filter((i) => i.id !== id);
+    const removed = new Set<Id>();
+    for (const floor of draft.floors) {
+      for (const p of floor.placements) if (p.itemId === id) removed.add(p.id);
+      floor.placements = floor.placements.filter((p) => p.itemId !== id);
+      for (const p of floor.placements) {
+        if (p.mount.kind === 'surface' && removed.has(p.mount.hostId)) {
+          p.mount = { kind: 'floor' };
+          p.elevation = 0;
+        }
+      }
+    }
+  });
+
+  if (useStore.getState().placingItemId === id) useStore.getState().setPlacingItem(null);
+}
+
+export function setQuantityOwned(id: Id, quantity: number): void {
+  const next = Math.max(0, Math.round(quantity));
+  useStore.getState().mutate('Quantity owned', (draft) => {
+    const item = draft.catalog.find((i) => i.id === id);
+    if (item) item.quantityOwned = next;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Placements (PLAN.md §4.2, §9.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The snap context for the active floor, minus the placement being dragged.
+ *
+ * Excluding it matters: an item is always inside its own outline, so a placement left
+ * in the host list would surface-mount to itself the moment it moved.
+ */
+export function placementSnapContext(
+  itemId: Id,
+  options: { excludePlacementId?: Id; toleranceMm: number },
+): PlacementSnapContext | null {
+  const state = useStore.getState();
+  const floor = activeFloor(state);
+  const item = findItem(state.doc, itemId);
+  if (!item) return null;
+
+  const hosts = floor.placements
+    .filter((p) => p.id !== options.excludePlacementId)
+    .flatMap((p) => {
+      const hostItem = findItem(state.doc, p.itemId);
+      if (!hostItem) return [];
+      return [
+        { id: p.id, outline: worldOutline(p, hostItem), canHostSurface: hostItem.canHostSurface },
+      ];
+    });
+
+  return {
+    walls: floor.walls,
+    hosts,
+    footprint: item.footprint,
+    gridMm: state.doc.gridMm,
+    gridEnabled: state.gridEnabled,
+    toleranceMm: options.toleranceMm,
+    suppressed: state.snapSuppressed,
+  };
+}
+
+/**
+ * Drop an item onto the plan.
+ *
+ * **This is where the calibration gate stops being decorative.** A floor whose plan
+ * has no scale refuses, with the same sentence the validation panel shows, because
+ * anything placed on an unscaled raster is placed at a size that means nothing.
+ *
+ * Wall and ceiling mounts are not reachable from here yet — they need a wall to host
+ * against and a ceiling to hang from, which is phase 5. A wall-mounted item dropped
+ * on the plan lands on the floor and can be raised there.
+ */
+export function addPlacement(
+  itemId: Id,
+  position: Vec2,
+  options: { rotation?: number; mount?: Placement['mount'] } = {},
+): Placement | null {
+  const state = useStore.getState();
+  const floor = activeFloor(state);
+  assertAcceptsPlacements(floor);
+
+  const item = findItem(state.doc, itemId);
+  if (!item) return null;
+
+  const placement: Placement = {
+    id: newId(),
+    itemId,
+    floorId: floor.id,
+    position: { x: Math.round(position.x), y: Math.round(position.y) },
+    // Normalized on the way in: a wall snap solves an angle with atan2, which happily
+    // returns -90, and nobody wants to read that in the properties panel.
+    rotation: normalizeRotation(options.rotation ?? 0),
+    mount: options.mount ?? { kind: 'floor' },
+    elevation: 0,
+  };
+
+  const floorId = floor.id;
+  useStore.getState().mutate(`Place ${item.name}`, (draft) => {
+    const target = draft.floors.find((f) => f.id === floorId);
+    if (target) target.placements.push(placement);
+  });
+  return placement;
+}
+
+/** The geometry a placement drag currently previews, given the raw pointer position. */
+export function previewPlacementTransform(
+  transform: PlacementTransform,
+  at: Vec2,
+  ctx: PlacementSnapContext | null,
+): PlacementTransform {
+  if (transform.mode === 'rotate') {
+    const dx = at.x - transform.origin.position.x;
+    const dy = at.y - transform.origin.position.y;
+    // The handle sticks out of the item's back, so a pointer directly above the
+    // centre reads as rotation 0 — the same convention wall snap uses.
+    const degrees = (Math.atan2(dx, -dy) * 180) / Math.PI;
+    const rotation = snapRotation(degrees, ctx?.suppressed ?? false);
+    return { ...transform, rotation, hints: [] };
+  }
+
+  const raw = {
+    x: transform.origin.position.x + (at.x - transform.grab.x),
+    y: transform.origin.position.y + (at.y - transform.grab.y),
+  };
+  if (!ctx) return { ...transform, position: raw, hints: [] };
+
+  const snapped = snapPlacement(raw, transform.rotation, ctx);
+  return {
+    ...transform,
+    position: snapped.position,
+    rotation: snapped.rotation,
+    mount: snapped.mount,
+    hints: snapped.hints,
+  };
+}
+
+/**
+ * Commit a placement drag. Called once on release, never during it.
+ *
+ * A press that never moved records nothing: immer patches an assignment even when the
+ * value is deep-equal, so an unchanged placement is skipped here rather than filtered
+ * out of the history later.
+ */
+export function commitPlacementTransform(transform: PlacementTransform): void {
+  const position = { x: Math.round(transform.position.x), y: Math.round(transform.position.y) };
+  const state = useStore.getState();
+  const floor = activeFloor(state);
+  const existing = floor.placements.find((p) => p.id === transform.placementId);
+  if (!existing) return;
+
+  const sameMount =
+    existing.mount.kind === transform.mount.kind &&
+    (existing.mount.kind !== 'surface' ||
+      (transform.mount.kind === 'surface' && existing.mount.hostId === transform.mount.hostId));
+
+  if (
+    existing.position.x === position.x &&
+    existing.position.y === position.y &&
+    existing.rotation === normalizeRotation(transform.rotation) &&
+    sameMount
+  ) {
+    return;
+  }
+
+  const label = transform.mode === 'rotate' ? 'Rotate item' : 'Move item';
+  useStore.getState().mutate(label, (draft) => {
+    for (const f of draft.floors) {
+      const placement = f.placements.find((p) => p.id === transform.placementId);
+      if (!placement) continue;
+      placement.position = position;
+      placement.rotation = normalizeRotation(transform.rotation);
+      placement.mount = transform.mount;
+      // Elevation is derived for surface mounts, so the stored value is only
+      // meaningful on the floor and on a wall — and on the floor it is zero.
+      if (transform.mount.kind !== 'wall') placement.elevation = 0;
+    }
+  });
+}
+
+/** Keep rotation in [0, 360) so the properties panel never shows −450°. */
+function normalizeRotation(degrees: number): number {
+  const d = degrees % 360;
+  return d < 0 ? d + 360 : d;
+}
+
+export function rotatePlacementBy(placementId: Id, degrees: number): void {
+  useStore.getState().mutate('Rotate item', (draft) => {
+    for (const floor of draft.floors) {
+      const placement = floor.placements.find((p) => p.id === placementId);
+      if (placement) placement.rotation = normalizeRotation(placement.rotation + degrees);
+    }
+  });
+}
+
+export function setPlacementElevation(placementId: Id, elevationMm: number): void {
+  const next = Math.max(0, Math.round(elevationMm));
+  useStore.getState().mutate('Elevation', (draft) => {
+    for (const floor of draft.floors) {
+      const placement = floor.placements.find((p) => p.id === placementId);
+      if (placement) placement.elevation = next;
+    }
+  });
 }

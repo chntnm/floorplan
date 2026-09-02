@@ -28,19 +28,30 @@ type Props = {
 };
 
 /**
- * Rebuild the hit graph as soon as `listening` changes, rather than on the next draw.
+ * Rebuild the hit graph as soon as its inputs change, rather than on the next draw.
  *
  * Konva writes hit-test geometry into a separate canvas that is only refreshed when
- * the layer is drawn. Flip `listening` and click within the same frame and the click
- * is tested against the *previous* state — so switching back to plan mode and
- * immediately clicking a wall selects nothing. `useLayoutEffect` runs after React has
- * committed the prop and before the browser paints, which is exactly the window this
- * needs to close.
+ * the layer is drawn, so anything that changes what is hittable is invisible to a
+ * click arriving in the same frame. Two triggers matter:
+ *
+ *   **`listening` flipped** — switch back to plan mode and immediately click a wall
+ *   and nothing is selected, because the layer is still deaf.
+ *
+ *   **A shape appeared or vanished** — draw a wall, click it straight away, and the
+ *   click is tested against a hit canvas that does not contain it yet.
+ *
+ * `useLayoutEffect` runs after React has committed and before the browser paints,
+ * which is exactly the window this needs to close. `count` keeps the work
+ * proportional to structural change rather than to every render.
  */
-function useSyncHitGraph(ref: RefObject<Konva.Layer | null>, listening: boolean): void {
+function useSyncHitGraph(
+  ref: RefObject<Konva.Layer | null>,
+  listening: boolean,
+  count: number,
+): void {
   useLayoutEffect(() => {
     ref.current?.drawHit();
-  }, [ref, listening]);
+  }, [ref, listening, count]);
 }
 
 function isSelected(selection: SelectionRef[], kind: SelectionRef['kind'], id: string): boolean {
@@ -93,7 +104,7 @@ export function StructureLayer({
   onGrabEndpoint,
 }: Props) {
   const layerRef = useRef<Konva.Layer>(null);
-  useSyncHitGraph(layerRef, interactive);
+  useSyncHitGraph(layerRef, interactive, floor.walls.length + floor.rooms.length);
 
   // A wall being dragged renders from the preview; the document still has the
   // original until the pointer is released.

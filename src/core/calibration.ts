@@ -242,3 +242,23 @@ export function placementBlockReason(floor: Floor): string | null {
 export function floorAcceptsPlacements(floor: Floor): boolean {
   return placementBlockReason(floor) === null;
 }
+
+/**
+ * Thrown when something tries to place an item on a floor that has no scale.
+ *
+ * The gate shipped in phase 3 as a predicate and a panel string because nothing could
+ * create a placement yet. This is what makes it real: the message is the same string
+ * the panel shows, so the refusal and the explanation can never drift apart.
+ */
+export class PlacementBlockedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'PlacementBlockedError';
+  }
+}
+
+/** Throw if this floor cannot accept placements. Call before every insert or move. */
+export function assertAcceptsPlacements(floor: Floor): void {
+  const reason = placementBlockReason(floor);
+  if (reason) throw new PlacementBlockedError(reason);
+}

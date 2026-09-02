@@ -26,6 +26,8 @@ export type PlanTheme = {
   selection: string;
   dimension: string;
   dimensionText: string;
+  /** Validation warnings — overlaps, headroom. Distinct from selection blue. */
+  warning: string;
 };
 
 const LIGHT: PlanTheme = {
@@ -45,6 +47,7 @@ const LIGHT: PlanTheme = {
   selection: '#1f6fd0',
   dimension: '#c8541f',
   dimensionText: '#8a3a14',
+  warning: '#c0392b',
 };
 
 const DARK: PlanTheme = {
@@ -64,6 +67,7 @@ const DARK: PlanTheme = {
   selection: '#5aa2f0',
   dimension: '#e8834a',
   dimensionText: '#f0a878',
+  warning: '#e5645a',
 };
 
 const QUERY = '(prefers-color-scheme: dark)';

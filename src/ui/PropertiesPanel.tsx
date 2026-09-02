@@ -8,16 +8,40 @@ import {
   deleteSelection,
   nudgeBackgroundRotation,
   removeBackground,
+  rotatePlacementBy,
   setBackgroundLocked,
   setBackgroundOpacity,
+  setPlacementElevation,
   setRoomName,
 } from '../state/actions';
-import {
-  backgroundExtentMm,
-  isCalibrated,
-  placementBlockReason,
-} from '../core/calibration';
+import { findItem, type Floor, type SpaceDocument } from '../core/document';
+import { resolveElevation, roomAt, surfaceHeight } from '../core/placement';
+import { ROTATION_STEP_DEG } from '../core/placement-snap';
+import { validateFloor, type Issue } from '../core/validation';
+import { backgroundExtentMm, isCalibrated } from '../core/calibration';
 import { hasAsset } from '../state/assets';
+
+const MOUNT_LABELS: Record<string, string> = {
+  floor: 'On the floor',
+  surface: 'On a surface',
+  wall: 'Wall-mounted',
+  ceiling: 'Hanging',
+};
+
+function mountLabel(kind: string): string {
+  return MOUNT_LABELS[kind] ?? kind;
+}
+
+function hostName(doc: SpaceDocument, floor: Floor, hostId: string): string {
+  const host = floor.placements.find((p) => p.id === hostId);
+  const item = host ? findItem(doc, host.itemId) : undefined;
+  return item?.name ?? 'something that is gone';
+}
+
+/** Select what an issue points at, so the panel is a way to find the problem. */
+function selectIssue(issue: Issue): void {
+  useStore.getState().setSelection(issue.refs.map((ref) => ({ kind: ref.kind, id: ref.id })));
+}
 
 /** A labelled read-only field. */
 function Field({ label, value }: { label: string; value: string }) {
@@ -43,13 +67,13 @@ export function PropertiesPanel() {
   const only = selection.length === 1 ? selection[0] : null;
 
   const background = floor.background;
-  // The gate's consequence, stated where a consequence belongs. Shipping the reason
-  // rather than a bare refusal is the whole point: "no" with no explanation reads as
-  // a bug, and phase 4 will surface exactly this string when it rejects a placement.
-  const blocked = placementBlockReason(floor);
 
   const wall = only?.kind === 'wall' ? floor.walls.find((w) => w.id === only.id) : undefined;
   const room = only?.kind === 'room' ? floor.rooms.find((r) => r.id === only.id) : undefined;
+  const placement =
+    only?.kind === 'placement' ? floor.placements.find((p) => p.id === only.id) : undefined;
+  const placementItem = placement ? findItem(doc, placement.itemId) : undefined;
+  const issues = validateFloor(doc, floor);
 
   // Held locally while typing so a rename is one undo step, not one per keystroke.
   const [draftName, setDraftName] = useState(room?.name ?? '');
@@ -98,6 +122,76 @@ export function PropertiesPanel() {
           <Field label="Area" value={formatArea(room.areaMm2, unit)} />
           <Field label="Ceiling" value={formatLength(room.ceilingHeightMm, unit)} />
           <Field label="Vertices" value={String(room.boundary.pts.length)} />
+        </div>
+      ) : null}
+
+      {placement && placementItem ? (
+        <div data-testid="placement-properties">
+          <Field label="Item" value={placementItem.name} />
+          <Field
+            label="Size"
+            value={`${formatLength(placementItem.widthMm, unit)} x ${formatLength(
+              placementItem.depthMm,
+              unit,
+            )} x ${formatLength(placementItem.heightMm, unit)}`}
+          />
+          <Field
+            label="Position"
+            value={`${formatLength(placement.position.x, unit)}, ${formatLength(
+              placement.position.y,
+              unit,
+            )}`}
+          />
+          <Field label="Room" value={roomAt(floor, placement.position)?.name ?? 'Unbounded'} />
+          {/* Read back through `resolveElevation` rather than from the stored field:
+              that field is only authoritative for floor and wall mounts, and a
+              surface-mounted item takes its base from whatever it is sitting on. */}
+          <Field label="Base" value={formatLength(resolveElevation(doc, placement), unit)} />
+          <Field label="Mount" value={mountLabel(placement.mount.kind)} />
+          {placement.mount.kind === 'surface' ? (
+            <Field label="Sitting on" value={hostName(doc, floor, placement.mount.hostId)} />
+          ) : null}
+
+          <div className="panel__row panel__row--rotate">
+            <button
+              type="button"
+              className="btn"
+              aria-label="Rotate left"
+              onClick={() => rotatePlacementBy(placement.id, -ROTATION_STEP_DEG)}
+            >
+              -{ROTATION_STEP_DEG}
+            </button>
+            <span className="field__value" data-testid="placement-rotation">
+              {Math.round(placement.rotation)}&deg;
+            </span>
+            <button
+              type="button"
+              className="btn"
+              aria-label="Rotate right"
+              onClick={() => rotatePlacementBy(placement.id, ROTATION_STEP_DEG)}
+            >
+              +{ROTATION_STEP_DEG}
+            </button>
+          </div>
+
+          {placement.mount.kind === 'wall' ? (
+            <label className="field field--input">
+              <span className="field__label">Height above floor</span>
+              <input
+                type="number"
+                value={placement.elevation}
+                aria-label="Height above floor in millimetres"
+                onChange={(e) => setPlacementElevation(placement.id, Number(e.target.value))}
+              />
+            </label>
+          ) : null}
+
+          {placementItem.canHostSurface ? (
+            <p className="panel__note">
+              Other items can sit on this, at{' '}
+              {formatLength(surfaceHeight(placement, placementItem), unit)}.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -188,15 +282,33 @@ export function PropertiesPanel() {
       ) : null}
 
       <h2 className="panel__heading">Validation</h2>
-      {blocked ? (
-        <p className="panel__warn" role="alert" data-testid="placement-blocked">
-          {blocked}
+      {issues.length === 0 ? (
+        <p className="panel__empty" data-testid="no-issues">
+          No issues. Clearance and door-swing checks arrive in phases 6 and 7.
         </p>
       ) : (
-        <p className="panel__empty">
-          No issues. Overlap, headroom and clearance checks arrive with the inventory
-          in phase 4.
-        </p>
+        <ul className="issues" data-testid="issue-list">
+          {issues.map((issue, i) => (
+            <li
+              key={i}
+              className="issue"
+              data-severity={issue.severity}
+              data-kind={issue.kind}
+              data-testid={issue.kind === 'uncalibrated' ? 'placement-blocked' : 'issue'}
+            >
+              {/* Clicking an issue selects what it points at, so the panel is a way
+                  to find the problem rather than only a way to hear about it. */}
+              <button
+                type="button"
+                className="issue__button"
+                disabled={issue.refs.length === 0}
+                onClick={() => selectIssue(issue)}
+              >
+                {issue.message}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </aside>
   );
