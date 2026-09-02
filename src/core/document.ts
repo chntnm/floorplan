@@ -161,6 +161,15 @@ export type Background = {
   sourceAssetId?: Id;
   pageIndex?: number;
   /**
+   * The raster's intrinsic size in pixels.
+   *
+   * This is the domain `calibration.refA/refB` live in, and it is what makes the
+   * image-pixel to document-millimetre map invertible before calibration exists.
+   * Without it a reopened document could render the background but could not
+   * convert a click on it back to a pixel, so recalibration would be impossible.
+   */
+  pixelSize: { width: number; height: number };
+  /**
    * Absent until the user completes the calibration gate. A floor plan has no
    * intrinsic scale, so a document with an uncalibrated background refuses
    * placements — see PLAN.md §6.1.

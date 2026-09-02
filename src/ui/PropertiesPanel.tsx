@@ -4,7 +4,20 @@ import { structureIsEditable } from '../core/modes';
 import { formatArea, formatLength } from '../core/units';
 import { wallAngleDeg, wallLength } from '../core/geometry/wall';
 import { activeFloor, useStore } from '../state/store';
-import { deleteSelection, setRoomName } from '../state/actions';
+import {
+  deleteSelection,
+  nudgeBackgroundRotation,
+  removeBackground,
+  setBackgroundLocked,
+  setBackgroundOpacity,
+  setRoomName,
+} from '../state/actions';
+import {
+  backgroundExtentMm,
+  isCalibrated,
+  placementBlockReason,
+} from '../core/calibration';
+import { hasAsset } from '../state/assets';
 
 /** A labelled read-only field. */
 function Field({ label, value }: { label: string; value: string }) {
@@ -28,6 +41,12 @@ export function PropertiesPanel() {
   const floor = activeFloor({ doc });
   const unit = doc.displayUnit;
   const only = selection.length === 1 ? selection[0] : null;
+
+  const background = floor.background;
+  // The gate's consequence, stated where a consequence belongs. Shipping the reason
+  // rather than a bare refusal is the whole point: "no" with no explanation reads as
+  // a bug, and phase 4 will surface exactly this string when it rejects a placement.
+  const blocked = placementBlockReason(floor);
 
   const wall = only?.kind === 'wall' ? floor.walls.find((w) => w.id === only.id) : undefined;
   const room = only?.kind === 'room' ? floor.rooms.find((r) => r.id === only.id) : undefined;
@@ -98,11 +117,87 @@ export function PropertiesPanel() {
         </button>
       ) : null}
 
+      {background ? (
+        <div data-testid="background-properties">
+          <h2 className="panel__heading">Floor plan</h2>
+
+          {!hasAsset(background.assetId) ? (
+            <p className="panel__warn" data-testid="background-missing">
+              The image for this plan is not loaded. It was probably opened from a
+              file saved without it.
+            </p>
+          ) : null}
+
+          <Field
+            label="Scale"
+            value={
+              isCalibrated(background)
+                ? `${formatLength(backgroundExtentMm(background).width, unit)} wide`
+                : 'Not calibrated'
+            }
+          />
+          <Field label="Source" value={`${background.pixelSize.width} × ${background.pixelSize.height} px`} />
+
+          <label className="field field--input">
+            <span className="field__label">Opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(background.opacity * 100)}
+              aria-label="Background opacity"
+              data-testid="background-opacity"
+              onChange={(e) => setBackgroundOpacity(Number(e.target.value) / 100)}
+            />
+          </label>
+
+          <label className="field field--input">
+            <span className="field__label">Locked</span>
+            <input
+              type="checkbox"
+              checked={background.locked}
+              aria-label="Lock the floor plan in place"
+              data-testid="background-locked"
+              onChange={(e) => setBackgroundLocked(e.target.checked)}
+            />
+          </label>
+
+          <div className="panel__row">
+            <button type="button" className="btn" onClick={() => nudgeBackgroundRotation(-0.5)}>
+              Rotate −0.5°
+            </button>
+            <button type="button" className="btn" onClick={() => nudgeBackgroundRotation(0.5)}>
+              Rotate +0.5°
+            </button>
+          </div>
+
+          <div className="panel__row">
+            <button
+              type="button"
+              className="btn"
+              data-testid="recalibrate"
+              onClick={() => useStore.getState().beginCalibration()}
+            >
+              Recalibrate
+            </button>
+            <button type="button" className="btn btn--danger" onClick={() => removeBackground()}>
+              Remove plan
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <h2 className="panel__heading">Validation</h2>
-      <p className="panel__empty">
-        No issues. Overlap, headroom and clearance checks arrive with the inventory in
-        phase 4.
-      </p>
+      {blocked ? (
+        <p className="panel__warn" role="alert" data-testid="placement-blocked">
+          {blocked}
+        </p>
+      ) : (
+        <p className="panel__empty">
+          No issues. Overlap, headroom and clearance checks arrive with the inventory
+          in phase 4.
+        </p>
+      )}
     </aside>
   );
 }

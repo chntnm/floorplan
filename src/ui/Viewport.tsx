@@ -1,5 +1,6 @@
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../state/store';
+import { CalibrationGate } from './CalibrationGate';
 import { PlanStage } from './plan/PlanStage';
 import { StatusBar } from './StatusBar';
 import { ToolPalette } from './ToolPalette';
@@ -22,6 +23,7 @@ export function Viewport() {
       {viewMode === 'plan2d' ? (
         <>
           <ToolPalette />
+          <CalibrationGate />
           <PlanStage />
           <StatusBar />
         </>

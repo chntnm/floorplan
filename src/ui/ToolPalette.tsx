@@ -17,16 +17,20 @@ import { useStore } from '../state/store';
  * mode is why.
  */
 export function ToolPalette() {
-  const { tool, shapeKind, editMode, gridEnabled } = useStore(
+  const { tool, shapeKind, editMode, gridEnabled, calibrating } = useStore(
     useShallow((s) => ({
       tool: s.tool,
       shapeKind: s.shapeKind,
       editMode: s.editMode,
       gridEnabled: s.gridEnabled,
+      calibrating: s.calibrating,
     })),
   );
 
-  const enabled = structureIsEditable(editMode);
+  // Disabled during the calibration gate as well as in furnish mode: a plan with no
+  // scale produces walls whose lengths mean nothing, and nothing downstream can
+  // correct them afterwards. See PLAN.md §6.1.
+  const enabled = structureIsEditable(editMode) && !calibrating;
 
   return (
     <div className="palette">
@@ -38,7 +42,7 @@ export function ToolPalette() {
             className="seg"
             data-active={t === tool}
             aria-pressed={t === tool}
-            disabled={!enabled && t !== 'select'}
+            disabled={!enabled && (calibrating || t !== 'select')}
             title={`${PLAN_TOOL_LABELS[t]} (${PLAN_TOOL_KEYS[t].toUpperCase()})`}
             onClick={() => useStore.getState().setTool(t)}
           >

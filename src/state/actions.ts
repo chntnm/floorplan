@@ -6,10 +6,23 @@
  * one committed from a test take exactly the same path.
  */
 
-import type { Room, Wall } from '../core/document';
+import type { AssetRef, Background, Room, Wall } from '../core/document';
 import { commitRoomRect, commitShapeRoom, commitWallChain, type ShapeKind } from '../core/tools';
+import {
+  applyCalibration,
+  clampOpacity,
+  docToImage,
+  rotateBackground,
+  backgroundCentre,
+} from '../core/calibration';
 import type { Vec2 } from '../core/geometry/vec';
-import { activeFloor, useStore, type SelectionRef, type WallTransform } from './store';
+import {
+  activeFloor,
+  useStore,
+  type MutateOptions,
+  type SelectionRef,
+  type WallTransform,
+} from './store';
 
 function withActiveFloor(label: string, fn: (floor: ReturnType<typeof activeFloor>) => void): void {
   const { mutate, doc } = useStore.getState();
@@ -148,4 +161,135 @@ export function previewWallTransform(transform: WallTransform, at: Vec2): WallTr
     };
   }
   return { ...transform, [transform.end]: at } as WallTransform;
+}
+
+// ---------------------------------------------------------------------------
+// Background (PLAN.md §6.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach an imported floor plan to the active floor.
+ *
+ * The manifest entries and the background land in one mutation, so an import is one
+ * undo step and there is never a document state that references an asset it has not
+ * declared. The bytes are already in the runtime asset store by this point; only the
+ * manifest is document state.
+ *
+ * Replacing an existing background drops the old manifest entries but deliberately
+ * leaves its bytes in the runtime store, because undo has to be able to bring them
+ * back and there is nowhere else they could come from.
+ */
+export function setBackground(background: Background, assets: readonly AssetRef[]): void {
+  const { doc } = useStore.getState();
+  const floorId = doc.activeFloorId;
+  const previous = doc.floors.find((f) => f.id === floorId)?.background;
+  const retired = new Set(
+    previous ? [previous.assetId, previous.sourceAssetId].filter((x): x is string => !!x) : [],
+  );
+
+  useStore.getState().mutate('Import floor plan', (draft) => {
+    draft.assets = draft.assets.filter((a) => !retired.has(a.id));
+    for (const ref of assets) {
+      if (!draft.assets.some((a) => a.id === ref.id)) draft.assets.push({ ...ref });
+    }
+    const floor = draft.floors.find((f) => f.id === floorId);
+    if (floor) floor.background = background;
+  });
+}
+
+export function removeBackground(): void {
+  const { doc } = useStore.getState();
+  const floorId = doc.activeFloorId;
+  const bg = doc.floors.find((f) => f.id === floorId)?.background;
+  if (!bg) return;
+
+  const retired = new Set([bg.assetId, bg.sourceAssetId].filter((x): x is string => !!x));
+  useStore.getState().mutate('Remove floor plan', (draft) => {
+    draft.assets = draft.assets.filter((a) => !retired.has(a.id));
+    const floor = draft.floors.find((f) => f.id === floorId);
+    if (floor) delete floor.background;
+  });
+}
+
+/**
+ * Edit the active floor's background in place. No-op when there is none.
+ *
+ * The equality check is not redundant with `mutate`'s no-op guard. These recipes
+ * assign a whole new object, and immer compares by reference — so setting a property
+ * to the value it already holds produces a patch and an undo entry that does
+ * nothing. Comparing the result first is what keeps "click Locked twice" out of the
+ * history.
+ */
+function mutateBackground(
+  label: string,
+  fn: (bg: Background) => Background,
+  options?: MutateOptions,
+): void {
+  const { doc } = useStore.getState();
+  const floorId = doc.activeFloorId;
+  const current = doc.floors.find((f) => f.id === floorId)?.background;
+  if (!current) return;
+
+  const next = fn(current);
+  if (JSON.stringify(next) === JSON.stringify(current)) return;
+
+  useStore.getState().mutate(
+    label,
+    (draft) => {
+      const floor = draft.floors.find((f) => f.id === floorId);
+      if (floor) floor.background = next;
+    },
+    options,
+  );
+}
+
+/**
+ * Close the calibration gate.
+ *
+ * The reference line arrives in document millimetres, because that is what the stage
+ * produces. It is converted to image pixels here, through the background's *current*
+ * transform — provisional on a first calibration, real on a recalibration — which is
+ * why `applyCalibration` then rescales about `refA` rather than about the origin.
+ *
+ * Throws `CalibrationError` with a message meant to be shown; the caller does not
+ * need to know why the numbers were unusable.
+ */
+export function commitCalibration(refDocA: Vec2, refDocB: Vec2, realLengthMm: number): void {
+  const floor = activeFloor(useStore.getState());
+  const bg = floor.background;
+  if (!bg) return;
+
+  // Validate before mutating: `applyCalibration` throws on a line too short to
+  // measure, and a failed gate must leave the document untouched.
+  const next = applyCalibration(bg, docToImage(bg, refDocA), docToImage(bg, refDocB), realLengthMm);
+  mutateBackground('Calibrate floor plan', () => next);
+}
+
+/**
+ * Opacity, coalesced.
+ *
+ * A range input fires `change` continuously, so one drag across the slider is
+ * hundreds of calls. Without coalescing each is an undo entry, and moving the slider
+ * once would push every wall you drew off a 200-deep history.
+ */
+export function setBackgroundOpacity(opacity: number): void {
+  mutateBackground('Background opacity', (bg) => ({ ...bg, opacity: clampOpacity(opacity) }), {
+    coalesce: true,
+  });
+}
+
+export function setBackgroundLocked(locked: boolean): void {
+  mutateBackground(locked ? 'Lock floor plan' : 'Unlock floor plan', (bg) => ({ ...bg, locked }));
+}
+
+export function moveBackground(position: Vec2): void {
+  mutateBackground('Move floor plan', (bg) => ({
+    ...bg,
+    transform: { ...bg.transform, position },
+  }));
+}
+
+/** Rotate about the raster centre, so squaring a crooked scan does not fling it away. */
+export function nudgeBackgroundRotation(degrees: number): void {
+  mutateBackground('Rotate floor plan', (bg) => rotateBackground(bg, degrees, backgroundCentre(bg)));
 }

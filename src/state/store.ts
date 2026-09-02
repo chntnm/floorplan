@@ -39,6 +39,9 @@ import {
 import type { EditMode, ViewMode } from '../core/modes';
 import { bounds, type Bounds } from '../core/geometry/polygon';
 import { wallOutline } from '../core/geometry/wall';
+import type { Vec2 } from '../core/geometry/vec';
+import type { AssetMap } from '../core/space-file';
+import { adoptAssets, clearAssets } from './assets';
 
 // immer 10 gates patch recording behind this plugin. Without it `produceWithPatches`
 // throws at runtime — which neither typecheck nor lint can see.
@@ -46,6 +49,21 @@ enablePatches();
 
 export type SelectionKind = 'wall' | 'room' | 'placement';
 export type SelectionRef = { kind: SelectionKind; id: Id };
+
+export type MutateOptions = {
+  /**
+   * Fold this change into the previous entry when that entry has the same label.
+   *
+   * For continuous controls — an opacity slider fires `change` on every pixel of the
+   * drag — where the alternative is a hundred history entries for one edit, and a
+   * 200-deep stack erased by moving a slider once.
+   *
+   * Only safe for recipes that write an **absolute** value at a fixed path, which is
+   * what makes replaying the newest patches over the oldest inverse correct. Do not
+   * set it on anything that splices an array.
+   */
+  coalesce?: boolean;
+};
 
 export type HistoryEntry = {
   label: string;
@@ -57,6 +75,16 @@ export type HistoryEntry = {
 export const HISTORY_LIMIT = 200;
 
 export type Measurement = { from: { x: number; y: number }; to: { x: number; y: number } };
+
+/**
+ * The reference line drawn during the calibration gate, in **document mm**.
+ *
+ * Document rather than image pixels because that is what the stage produces and what
+ * the draft layer draws; it is converted to image pixels once, at commit, through
+ * the background's current (provisional) transform. Keeping it here rather than in
+ * the document means an abandoned calibration leaves no undo entry behind.
+ */
+export type CalibrationRef = { a: Vec2; b: Vec2 };
 
 /**
  * A wall being dragged, held as preview geometry in the editor slice.
@@ -84,10 +112,10 @@ export type StoreState = {
   /** True once the document has changed since it was created, loaded or saved. */
   dirty: boolean;
 
-  mutate: (label: string, recipe: (draft: SpaceDocument) => void) => void;
+  mutate: (label: string, recipe: (draft: SpaceDocument) => void, options?: MutateOptions) => void;
   undo: () => void;
   redo: () => void;
-  loadDocument: (doc: SpaceDocument) => void;
+  loadDocument: (doc: SpaceDocument, assets?: AssetMap) => void;
   newDocument: () => void;
   markSaved: () => void;
 
@@ -112,6 +140,16 @@ export type StoreState = {
   measurement: Measurement | null;
   /** The wall drag in flight, if any. */
   transform: WallTransform | null;
+  /**
+   * True while the calibration gate is open (PLAN.md §6.1).
+   *
+   * Blocking: the tools and the mode switches are unavailable until the background
+   * has a scale, because tracing an uncalibrated plan produces walls whose lengths
+   * mean nothing and which nothing later can correct.
+   */
+  calibrating: boolean;
+  /** The reference line being drawn, or the finished one awaiting its real length. */
+  calibrationRef: CalibrationRef | null;
 
   setEditMode: (mode: EditMode) => void;
   setViewMode: (mode: ViewMode) => void;
@@ -128,6 +166,9 @@ export type StoreState = {
   setSnapSuppressed: (on: boolean) => void;
   setMeasurement: (m: Measurement | null) => void;
   setTransform: (t: WallTransform | null) => void;
+  beginCalibration: () => void;
+  setCalibrationRef: (ref: CalibrationRef | null) => void;
+  endCalibration: () => void;
   zoomToFit: () => void;
 };
 
@@ -183,7 +224,7 @@ export const useStore = create<StoreState>((set, get) => ({
   future: [],
   dirty: false,
 
-  mutate: (label, recipe) => {
+  mutate: (label, recipe, options) => {
     const state = get();
     const [next, patches, inverse] = produceWithPatches(state.doc, (draft) => {
       recipe(draft);
@@ -194,7 +235,16 @@ export const useStore = create<StoreState>((set, get) => ({
     // happen" — a recipe that turned out to be a no-op must not land on the stack.
     if (patches.every((p) => p.path[0] === 'modifiedAt')) return;
 
-    const past = [...state.past, { label, patches: [...patches], inverse: [...inverse] }];
+    const previous = state.past[state.past.length - 1];
+    // Keep the older entry's inverse: undo has to reach the state before the whole
+    // gesture, not before its last frame.
+    const past =
+      options?.coalesce && previous?.label === label
+        ? [
+            ...state.past.slice(0, -1),
+            { label, patches: [...patches], inverse: previous.inverse },
+          ]
+        : [...state.past, { label, patches: [...patches], inverse: [...inverse] }];
     set({
       doc: next,
       past: past.length > HISTORY_LIMIT ? past.slice(past.length - HISTORY_LIMIT) : past,
@@ -238,7 +288,12 @@ export const useStore = create<StoreState>((set, get) => ({
     });
   },
 
-  loadDocument: (doc) =>
+  // The asset store is the other half of the document (see `state/assets.ts`), so
+  // replacing one replaces the other. Leaving stale bytes behind would mean the next
+  // save wrote a file carrying the previous document's background.
+  loadDocument: (doc, assets) => {
+    if (assets) adoptAssets(doc, assets);
+    else clearAssets();
     set({
       doc,
       past: [],
@@ -250,9 +305,13 @@ export const useStore = create<StoreState>((set, get) => ({
       measurement: null,
       cursor: null,
       snapHints: [],
-    }),
+      calibrating: false,
+      calibrationRef: null,
+    });
+  },
 
-  newDocument: () =>
+  newDocument: () => {
+    clearAssets();
     set({
       doc: freshDocument(),
       past: [],
@@ -264,8 +323,11 @@ export const useStore = create<StoreState>((set, get) => ({
       measurement: null,
       cursor: null,
       snapHints: [],
+      calibrating: false,
+      calibrationRef: null,
       viewport: DEFAULT_VIEWPORT,
-    }),
+    });
+  },
 
   markSaved: () => set({ dirty: false }),
 
@@ -286,6 +348,8 @@ export const useStore = create<StoreState>((set, get) => ({
   wallDefaults: DEFAULT_WALL_DEFAULTS,
   measurement: null,
   transform: null,
+  calibrating: false,
+  calibrationRef: null,
 
   setEditMode: (editMode) =>
     // Structure tools have no meaning in furnish mode, and a half-drawn wall would
@@ -322,6 +386,13 @@ export const useStore = create<StoreState>((set, get) => ({
   setSnapSuppressed: (snapSuppressed) => set({ snapSuppressed }),
   setMeasurement: (measurement) => set({ measurement }),
   setTransform: (transform) => set({ transform }),
+
+  // Opening the gate cancels whatever was in flight: a half-drawn wall committed
+  // against an uncalibrated plan is exactly the geometry the gate exists to stop.
+  beginCalibration: () =>
+    set({ calibrating: true, calibrationRef: null, draft: null, transform: null, selection: [] }),
+  setCalibrationRef: (calibrationRef) => set({ calibrationRef }),
+  endCalibration: () => set({ calibrating: false, calibrationRef: null }),
 
   zoomToFit: () => {
     const state = get();

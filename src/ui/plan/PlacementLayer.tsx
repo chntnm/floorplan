@@ -1,4 +1,6 @@
+import { useLayoutEffect, useRef } from 'react';
 import { Layer, Line } from 'react-konva';
+import type Konva from 'konva';
 import type { Floor, SpaceDocument } from '../../core/document';
 import { findItem } from '../../core/document';
 import { worldOutline } from '../../core/placement';
@@ -34,8 +36,16 @@ export function PlacementLayer({
   interactive,
   onSelect,
 }: Props) {
+  // Same hazard as the structure layer: Konva refreshes hit geometry on draw, not on
+  // assignment, so a click in the frame the mode changed would be tested against the
+  // old state. See `useSyncHitGraph` in StructureLayer.
+  const layerRef = useRef<Konva.Layer>(null);
+  useLayoutEffect(() => {
+    layerRef.current?.drawHit();
+  }, [interactive]);
+
   return (
-    <Layer listening={interactive} opacity={interactive ? 1 : 0.4}>
+    <Layer ref={layerRef} listening={interactive} opacity={interactive ? 1 : 0.4}>
       {floor.placements.map((placement) => {
         const item = findItem(doc, placement.itemId);
         if (!item) return null; // dangling itemId — the validation panel's problem

@@ -22,6 +22,7 @@ import {
   deleteSelection,
   previewWallTransform,
 } from '../../state/actions';
+import { BackgroundLayer } from './BackgroundLayer';
 import { DraftLayer } from './DraftLayer';
 import { GridLayer } from './GridLayer';
 import { PlacementLayer } from './PlacementLayer';
@@ -63,6 +64,7 @@ export function PlanStage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const pan = useRef<{ active: boolean; x: number; y: number }>({ active: false, x: 0, y: 0 });
   const lastClickPx = useRef<{ x: number; y: number } | null>(null);
+  const calDrag = useRef(false);
   const theme = usePlanTheme();
 
   const {
@@ -77,6 +79,8 @@ export function PlanStage() {
     selection,
     measurement,
     transform,
+    calibrating,
+    calibrationRef,
   } = useStore(
     useShallow((s) => ({
       doc: s.doc,
@@ -90,6 +94,8 @@ export function PlanStage() {
       selection: s.selection,
       measurement: s.measurement,
       transform: s.transform,
+      calibrating: s.calibrating,
+      calibrationRef: s.calibrationRef,
     })),
   );
 
@@ -193,6 +199,19 @@ export function PlanStage() {
     const middle = e.evt.button === 1;
     const onEmptyCanvas = e.target === stage;
 
+    // The gate takes the whole stage. Snapping is deliberately off for this drag:
+    // the reference has to land on the feature in the raster the user is pointing
+    // at, and quantising it to the grid quantises the scale that comes out of it.
+    if (useStore.getState().calibrating && !middle) {
+      if (e.evt.button !== 0) return;
+      const pos = stage.getPointerPosition();
+      if (!pos) return;
+      const at = screenToDoc(useStore.getState().viewport, pos);
+      calDrag.current = true;
+      useStore.getState().setCalibrationRef({ a: at, b: at });
+      return;
+    }
+
     // Middle-drag always pans; so does a left-drag on empty canvas with Select, which
     // is the gesture most people reach for before finding a pan key.
     if (middle || (onEmptyCanvas && tool === 'select')) {
@@ -271,6 +290,15 @@ export function PlanStage() {
     }
 
     const store = useStore.getState();
+
+    if (calDrag.current) {
+      const pos = stage.getPointerPosition();
+      const ref = store.calibrationRef;
+      if (pos && ref) store.setCalibrationRef({ a: ref.a, b: screenToDoc(store.viewport, pos) });
+      return;
+    }
+    if (store.calibrating) return;
+
     const dragging = store.transform;
     const snapped = snapAt(stage, dragging && dragging.end !== 'both' ? undefined : draftAnchor());
     if (!snapped) return;
@@ -297,6 +325,16 @@ export function PlanStage() {
     }
 
     const store = useStore.getState();
+
+    if (calDrag.current) {
+      calDrag.current = false;
+      // A click without a drag is not a reference line; drop it so the gate keeps
+      // asking rather than accepting a zero-length one it would only reject later.
+      const ref = store.calibrationRef;
+      if (ref && ref.a.x === ref.b.x && ref.a.y === ref.b.y) store.setCalibrationRef(null);
+      return;
+    }
+    if (store.calibrating) return;
 
     const dragging = store.transform;
     if (dragging) {
@@ -353,6 +391,14 @@ export function PlanStage() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
       const store = useStore.getState();
+
+      // The gate is blocking, so the shortcuts are too. Undoing past an import while
+      // the gate is open would leave it prompting for a background that is gone, and
+      // a tool key would arm a tool the palette is showing as unavailable.
+      if (store.calibrating) {
+        if (e.key === 'Escape') store.setCalibrationRef(null);
+        return;
+      }
 
       if (e.key === 'Alt') {
         store.setSnapSuppressed(true);
@@ -420,8 +466,18 @@ export function PlanStage() {
   }, []);
 
   // ---- render ------------------------------------------------------------
-  const structureInteractive = structureIsEditable(editMode) && tool === 'select';
-  const placementsInteractive = placementsAreEditable(editMode);
+  // Mode drives `listening`, which is the layer toggle from the brief. The tool
+  // drives `selectable`, which the shape handlers read — because flipping
+  // `listening` only takes effect on Konva's next draw, and a click that arrives in
+  // the same frame lands on a layer that is still deaf.
+  const structureInteractive = structureIsEditable(editMode) && !calibrating;
+  const structureSelectable = structureInteractive && tool === 'select';
+  const placementsInteractive = placementsAreEditable(editMode) && !calibrating;
+  // The background only accepts a drag when it has been deliberately unlocked, and
+  // never while the gate is open — dragging the plan out from under the reference
+  // line you are drawing on it is not a gesture anyone means.
+  const backgroundInteractive =
+    structureSelectable && floor.background?.locked === false;
 
   const onSelect = (ref: SelectionRef, additive: boolean) => {
     const store = useStore.getState();
@@ -433,7 +489,7 @@ export function PlanStage() {
     <div
       ref={containerRef}
       className="planstage"
-      data-cursor={DRAW_TOOLS.has(tool) ? 'draw' : 'select'}
+      data-cursor={calibrating || DRAW_TOOLS.has(tool) ? 'draw' : 'select'}
       data-testid="plan-stage"
     >
       <Stage
@@ -457,6 +513,12 @@ export function PlanStage() {
         onWheel={onWheel}
         onContextMenu={(e) => e.evt.preventDefault()}
       >
+        <BackgroundLayer
+          background={floor.background}
+          viewport={viewport}
+          interactive={backgroundInteractive}
+        />
+
         <GridLayer
           viewport={viewport}
           size={stageSize}
@@ -478,6 +540,7 @@ export function PlanStage() {
           displayUnit={doc.displayUnit}
           selection={selection}
           interactive={structureInteractive}
+          selectable={structureSelectable}
           transform={transform}
           onSelect={onSelect}
           onGrabWall={(wallId) => beginTransform(wallId, 'both')}
@@ -497,6 +560,7 @@ export function PlanStage() {
         <DraftLayer
           draft={draft}
           measurement={measurement}
+          calibrationRef={calibrationRef}
           snapHints={snapHints}
           cursor={cursor}
           viewport={viewport}

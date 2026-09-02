@@ -1,4 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
+import { backgroundExtentMm, isCalibrated } from '../core/calibration';
 import { formatLength } from '../core/units';
 import { DEFAULT_SCALE, gridStepMm } from '../core/viewport';
 import { activeFloor, documentGridMm, useStore } from '../state/store';
@@ -39,6 +40,17 @@ export function StatusBar() {
       <span data-testid="count-placements">
         Items <b>{floor.placements.length}</b>
       </span>
+
+      {/* The plan's width is the honest readout of a calibration: it is the number
+          that changes when a scale is applied, and the one a person can sanity-check
+          against a room they have stood in. `mmPerPx` is true but unreadable. */}
+      {floor.background ? (
+        <span data-testid="background-readout">
+          {isCalibrated(floor.background)
+            ? `Plan ${formatLength(backgroundExtentMm(floor.background).width, unit)} wide`
+            : 'Plan uncalibrated'}
+        </span>
+      ) : null}
 
       <span className="statusbar__spacer" />
 

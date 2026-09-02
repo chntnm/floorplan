@@ -4,12 +4,14 @@ import { shapeBoundary, type Draft } from '../../core/tools';
 import { formatLength, type DisplayUnit } from '../../core/units';
 import { docToScreen, flattenToScreen, type Viewport } from '../../core/viewport';
 import type { SnapHint } from '../../core/snapping';
-import type { Measurement } from '../../state/store';
+import type { CalibrationRef, Measurement } from '../../state/store';
 import type { PlanTheme } from './theme';
 
 type Props = {
   draft: Draft | null;
   measurement: Measurement | null;
+  /** The calibration reference line, drawn while the gate is open. */
+  calibrationRef: CalibrationRef | null;
   snapHints: SnapHint[];
   cursor: Vec2 | null;
   viewport: Viewport;
@@ -64,6 +66,7 @@ function SegmentLabel({
 export function DraftLayer({
   draft,
   measurement,
+  calibrationRef,
   snapHints,
   cursor,
   viewport,
@@ -172,6 +175,31 @@ export function DraftLayer({
             viewport={viewport}
             displayUnit={displayUnit}
             color={theme.dimensionText}
+          />
+        </>
+      ) : null}
+
+      {/* The calibration reference. Labelled with what it measures *today*, under the
+          provisional scale — which is exactly the number the gate is about to
+          replace, and seeing it change is how the correction reads as having
+          worked. End caps because the endpoints are what get anchored. */}
+      {calibrationRef ? (
+        <>
+          <Line
+            points={flattenToScreen(viewport, [calibrationRef.a, calibrationRef.b])}
+            stroke={theme.snap}
+            strokeWidth={2.5}
+          />
+          {[calibrationRef.a, calibrationRef.b].map((p, i) => {
+            const s = docToScreen(viewport, p);
+            return <Circle key={i} x={s.x} y={s.y} radius={4} fill={theme.snap} />;
+          })}
+          <SegmentLabel
+            from={calibrationRef.a}
+            to={calibrationRef.b}
+            viewport={viewport}
+            displayUnit={displayUnit}
+            color={theme.snap}
           />
         </>
       ) : null}

@@ -505,6 +505,21 @@ points quickly — which is how anyone draws — ends the chain at the second po
 Clicking the same spot twice is the gesture people actually mean, and it needs no
 timer; Enter and closing the loop also finish.
 
+**`listening` does not take effect until the next draw.** Konva keeps hit-test
+geometry in a separate canvas that is only refreshed when the layer is drawn, so a
+layer switched on and clicked within the same frame is still deaf — pick Select and
+click a wall fast enough and nothing happens. Two consequences, both load-bearing:
+the *tool* is checked inside the shape handlers rather than by toggling `listening`,
+and the *mode* switch calls `drawHit()` from a layout effect so the hit graph is
+rebuilt before the browser paints.
+
+**Nothing above the canvas may change height during a gesture.** The calibration gate
+is a band directly above the stage; an early version swapped a one-line prompt for the
+length form on mousedown, the band grew, the stage shifted down under the pointer, and
+a reference drawn as 3000mm committed as 3048mm — with every dimension traced
+afterwards inheriting the error. Controls there are rendered disabled, not absent, and
+the error line reserves its space.
+
 ---
 
 ## 9. Placement Quality
@@ -680,7 +695,7 @@ isolated so neither blocks the core editor.
 | **0** | Scaffold: Vite + React + TS, vitest, playwright, lint, CI. Empty app shell. |
 | **1** | **Geometry core** — units, mm integers, polygon primitive, all generators, rotation/transform, area, SAT + clipping overlap, vertical intervals. Pure functions, no UI, heavily tested. Document model + `.space` read/write + migration hook. Round-trips a hand-authored fixture. |
 | **2** | **Plan editor** — Konva stage, pan/zoom, wall/room/shape tools, dimension tool, grid + snapping, selection and transform (wall endpoint and body drag), mode toggle, undo/redo. Draw a floor plan by hand and save it. Room *reposition* is deliberately not included: rooms and their walls are separate entities, and moving one without the other desynchronises them — redraw instead until phase 8 relates them. |
-| **3** | **Import + calibration** — PDF via pdfjs, image import, the blocking calibration gate, background transform/opacity/lock, tracing over a real plan. |
+| **3** | **Import + calibration** — PDF via pdfjs (dynamically imported, so the 437kB renderer stays off first paint), image import, the blocking calibration gate, background transform/opacity/lock, tracing over a real plan. An uncalibrated background is shown at a nominal 6m width so the reference line is drawable *and* so the transform is invertible before a real scale exists; calibrating rescales about `refA` so the point the user anchored on does not move, and `transform.position` stays a float because rounding it would drift the anchor on every recalibration. Import deliberately does not re-fit the viewport. Deferred: thumbnails and File System Access (phase 9), vector path extraction (v2). |
 | **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap and overlap warnings. **First genuinely useful build.** |
 | **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. |
 | **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. |

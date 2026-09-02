@@ -9,11 +9,12 @@ import {
 import { useStore } from '../state/store';
 import { renameDocument } from '../state/actions';
 import { openDocumentFile, saveDocument, SPACE_EXTENSION } from './file-io';
+import { ImportButton } from './ImportButton';
 
 export function TopBar() {
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const { doc, editMode, viewMode, dirty, canUndo, canRedo } = useStore(
+  const { doc, editMode, viewMode, dirty, canUndo, canRedo, calibrating } = useStore(
     useShallow((s) => ({
       doc: s.doc,
       editMode: s.editMode,
@@ -21,6 +22,7 @@ export function TopBar() {
       dirty: s.dirty,
       canUndo: s.past.length > 0,
       canRedo: s.future.length > 0,
+      calibrating: s.calibrating,
     })),
   );
 
@@ -46,7 +48,10 @@ export function TopBar() {
 
   const onOpen = async (file: File) => {
     try {
-      useStore.getState().loadDocument(await openDocumentFile(file));
+      // The assets travel with the document into the runtime store; passing only
+      // `.document` here is what made a reopened background render as nothing.
+      const bundle = await openDocumentFile(file);
+      useStore.getState().loadDocument(bundle.document, bundle.assets);
       useStore.getState().zoomToFit();
     } catch (err) {
       // A bad file is the user's problem to fix, not a crash to swallow: say what
@@ -91,6 +96,7 @@ export function TopBar() {
         <button type="button" className="seg" onClick={onSave}>
           Save
         </button>
+        <ImportButton disabled={calibrating} />
         <input
           ref={fileInput}
           type="file"
@@ -110,7 +116,7 @@ export function TopBar() {
         <button
           type="button"
           className="seg"
-          disabled={!canUndo}
+          disabled={!canUndo || calibrating}
           title="Undo (Ctrl+Z)"
           onClick={() => useStore.getState().undo()}
         >
@@ -119,7 +125,7 @@ export function TopBar() {
         <button
           type="button"
           className="seg"
-          disabled={!canRedo}
+          disabled={!canRedo || calibrating}
           title="Redo (Ctrl+Shift+Z)"
           onClick={() => useStore.getState().redo()}
         >
@@ -135,6 +141,7 @@ export function TopBar() {
             className="seg"
             data-active={mode === editMode}
             aria-pressed={mode === editMode}
+            disabled={calibrating}
             onClick={() => useStore.getState().setEditMode(mode)}
           >
             {EDIT_MODE_LABELS[mode]}
@@ -150,6 +157,7 @@ export function TopBar() {
             className="seg"
             data-active={mode === viewMode}
             aria-pressed={mode === viewMode}
+            disabled={calibrating}
             onClick={() => useStore.getState().setViewMode(mode)}
           >
             {VIEW_MODE_LABELS[mode]}

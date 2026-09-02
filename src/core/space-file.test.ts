@@ -118,6 +118,7 @@ function fixture(): SpaceDocument {
   floor.background = {
     assetId: 'asset-bg',
     pageIndex: 0,
+    pixelSize: { width: 1600, height: 1200 },
     calibration: {
       refA: { x: 100, y: 100 },
       refB: { x: 500, y: 100 },

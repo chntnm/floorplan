@@ -1,5 +1,6 @@
-import { Fragment } from 'react';
+import { Fragment, useLayoutEffect, useRef, type RefObject } from 'react';
 import { Circle, Layer, Line, Text } from 'react-konva';
+import type Konva from 'konva';
 import type { Floor, Opening, Wall } from '../../core/document';
 import { centroid } from '../../core/geometry/polygon';
 import { wallOutline } from '../../core/geometry/wall';
@@ -17,12 +18,30 @@ type Props = {
   selection: SelectionRef[];
   /** False in furnish mode — the structure renders but does not accept clicks. */
   interactive: boolean;
+  /** False while a draw tool is armed: the click belongs to the drawing, not here. */
+  selectable: boolean;
   /** The drag in flight, previewed here while the document still holds the original. */
   transform: WallTransform | null;
   onSelect: (ref: SelectionRef, additive: boolean) => void;
   onGrabWall: (wallId: string) => void;
   onGrabEndpoint: (wallId: string, end: 'a' | 'b') => void;
 };
+
+/**
+ * Rebuild the hit graph as soon as `listening` changes, rather than on the next draw.
+ *
+ * Konva writes hit-test geometry into a separate canvas that is only refreshed when
+ * the layer is drawn. Flip `listening` and click within the same frame and the click
+ * is tested against the *previous* state — so switching back to plan mode and
+ * immediately clicking a wall selects nothing. `useLayoutEffect` runs after React has
+ * committed the prop and before the browser paints, which is exactly the window this
+ * needs to close.
+ */
+function useSyncHitGraph(ref: RefObject<Konva.Layer | null>, listening: boolean): void {
+  useLayoutEffect(() => {
+    ref.current?.drawHit();
+  }, [ref, listening]);
+}
 
 function isSelected(selection: SelectionRef[], kind: SelectionRef['kind'], id: string): boolean {
   return selection.some((s) => s.kind === kind && s.id === id);
@@ -52,6 +71,13 @@ function openingQuad(wall: Wall, opening: Opening): number[] | null {
  * `listening` is driven by the edit mode, which is the layer toggle from the brief:
  * in furnish mode the structure is still drawn but is not hit-testable, so a click
  * that lands on a wall passes through to whatever is beneath it.
+ *
+ * **`listening` deliberately does not track the active tool.** Konva rebuilds a
+ * layer's hit graph on the next draw, not on the assignment, so a layer switched on
+ * and clicked within the same frame is still deaf — pick Select and click a wall
+ * fast enough and nothing happens. Tool state is therefore checked inside the
+ * handlers, where it takes effect immediately, and a non-selectable click returns
+ * *without* cancelling the bubble so the stage still receives it and can draw.
  */
 export function StructureLayer({
   floor,
@@ -60,11 +86,15 @@ export function StructureLayer({
   displayUnit,
   selection,
   interactive,
+  selectable,
   transform,
   onSelect,
   onGrabWall,
   onGrabEndpoint,
 }: Props) {
+  const layerRef = useRef<Konva.Layer>(null);
+  useSyncHitGraph(layerRef, interactive);
+
   // A wall being dragged renders from the preview; the document still has the
   // original until the pointer is released.
   const walls = transform
@@ -75,7 +105,7 @@ export function StructureLayer({
   const wallsById = new Map(walls.map((w) => [w.id, w]));
 
   return (
-    <Layer listening={interactive}>
+    <Layer ref={layerRef} listening={interactive}>
       {floor.rooms.map((room) => {
         const c = docToScreen(viewport, centroid(room.boundary));
         const selected = isSelected(selection, 'room', room.id);
@@ -88,6 +118,7 @@ export function StructureLayer({
               stroke={selected ? theme.selection : theme.roomStroke}
               strokeWidth={selected ? 2 : 1}
               onMouseDown={(e) => {
+                if (!selectable) return;
                 e.cancelBubble = true;
                 onSelect({ kind: 'room', id: room.id }, e.evt.shiftKey);
               }}
@@ -126,6 +157,7 @@ export function StructureLayer({
             stroke={selected ? theme.selection : theme.wallStroke}
             strokeWidth={selected ? 2 : 0.75}
             onMouseDown={(e) => {
+              if (!selectable) return;
               e.cancelBubble = true;
               onSelect({ kind: 'wall', id: wall.id }, e.evt.shiftKey);
               // Selecting and grabbing are the same gesture; a press that never moves
@@ -179,6 +211,7 @@ export function StructureLayer({
                 strokeWidth={1}
                 hitStrokeWidth={12}
                 onMouseDown={(e) => {
+                  if (!selectable) return;
                   e.cancelBubble = true;
                   onGrabEndpoint(wall.id, end);
                 }}
