@@ -7,6 +7,10 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
  *
  * One screen pixel is 20mm at that scale, so a half-pixel of rounding is 10mm — under
  * half the 25mm snap grid, which is what makes the coordinates below land exactly.
+ *
+ * The mapping holds for a fresh page only. Opening a file calls `zoomToFit`, and
+ * anything that zooms, pans or fits invalidates it — do not click document
+ * coordinates after one of those without re-deriving the transform.
  */
 const SCALE = 0.05;
 const ORIGIN = { x: 120, y: 100 };
@@ -101,6 +105,23 @@ test.describe('drawing', () => {
     await expect(page.getByTestId('count-walls')).toContainText('0');
   });
 
+  test('closes a wall loop by clicking back on the start point', async ({ page }) => {
+    // The start point has to be a snap target in its own right; without that this
+    // only works when the last click lands in the same grid cell by luck.
+    const stage = page.getByTestId('plan-stage');
+    await selectTool(page, 'Wall');
+
+    await clickAt(page, stage, { x: 0, y: 0 });
+    await clickAt(page, stage, { x: 4000, y: 0 });
+    await clickAt(page, stage, { x: 4000, y: 3000 });
+    await clickAt(page, stage, { x: 0, y: 3000 });
+    // Deliberately a little off the start — the snap radius should still take it.
+    await clickAt(page, stage, { x: 60, y: 60 });
+
+    await expect(page.getByTestId('count-walls')).toContainText('4');
+    await expect(page.getByTestId('history-readout')).toContainText('1 undo');
+  });
+
   test('picks up tools by keyboard shortcut', async ({ page }) => {
     await page.keyboard.press('w');
     await expect(page.getByRole('button', { name: 'Wall' })).toHaveAttribute(
@@ -178,6 +199,50 @@ test.describe('mode toggle', () => {
   });
 });
 
+test.describe('transform', () => {
+  test('drags a wall endpoint and commits one undo step', async ({ page }) => {
+    const stage = page.getByTestId('plan-stage');
+    await selectTool(page, 'Wall');
+    await clickAt(page, stage, { x: 0, y: 0 });
+    await clickAt(page, stage, { x: 4000, y: 0 });
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('count-walls')).toContainText('1');
+
+    await selectTool(page, 'Select');
+    await clickAt(page, stage, { x: 2000, y: 0 });
+    await expect(page.getByTestId('wall-properties')).toContainText(`13' 1.5"`);
+
+    // Drag the far endpoint out to 6000mm — the wall becomes 19' 8.25".
+    const from = await docToPage(stage, { x: 4000, y: 0 });
+    const to = await docToPage(stage, { x: 6000, y: 0 });
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move((from.x + to.x) / 2, from.y);
+    await page.mouse.move(to.x, to.y);
+    await page.mouse.up();
+
+    await expect(page.getByTestId('wall-properties')).toContainText(`19' 8.25"`);
+    // Two entries total: drawing the wall, then moving it. Not one per mousemove.
+    await expect(page.getByTestId('history-readout')).toContainText('2 undo');
+
+    await page.keyboard.press('Control+z');
+    await expect(page.getByTestId('wall-properties')).toContainText(`13' 1.5"`);
+  });
+
+  test('a click that does not move the wall is not an undo step', async ({ page }) => {
+    const stage = page.getByTestId('plan-stage');
+    await selectTool(page, 'Room');
+    await dragBetween(page, stage, { x: 0, y: 0 }, { x: 4000, y: 3000 });
+    await expect(page.getByTestId('history-readout')).toContainText('1 undo');
+
+    await selectTool(page, 'Select');
+    await clickAt(page, stage, { x: 2000, y: 0 });
+    await expect(page.getByTestId('wall-properties')).toBeVisible();
+
+    await expect(page.getByTestId('history-readout')).toContainText('1 undo');
+  });
+});
+
 test.describe('selection', () => {
   test('deletes a selected wall and its opening', async ({ page }) => {
     const stage = page.getByTestId('plan-stage');
@@ -208,15 +273,20 @@ test.describe('portability', () => {
     await page.keyboard.press('Enter');
 
     await expect(page.getByTestId('count-walls')).toContainText('5');
-    await expect(page.getByTestId('doc-title')).toContainText('•'); // unsaved
+    await expect(page.getByTestId('dirty-flag')).toHaveText('•'); // unsaved
+
+    // Name it, so the saved file is named after the space rather than "Untitled".
+    const title = page.getByLabel('Space name');
+    await title.fill('Maple Street');
+    await title.press('Enter');
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Save' }).click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe('Untitled-space.space');
+    expect(download.suggestedFilename()).toBe('Maple-Street.space');
 
     const file = await download.path();
-    await expect(page.getByTestId('doc-title')).not.toContainText('•');
+    await expect(page.getByTestId('dirty-flag')).toBeEmpty();
 
     // A reload is a genuinely empty editor — nothing carried in memory.
     await page.reload();
@@ -226,7 +296,8 @@ test.describe('portability', () => {
 
     await expect(page.getByTestId('count-walls')).toContainText('5');
     await expect(page.getByTestId('count-rooms')).toContainText('1');
-    await expect(page.getByTestId('doc-title')).not.toContainText('•');
+    await expect(page.getByLabel('Space name')).toHaveValue('Maple Street');
+    await expect(page.getByTestId('dirty-flag')).toBeEmpty();
   });
 
   test('reports an unreadable file instead of failing silently', async ({ page }) => {

@@ -14,7 +14,14 @@ import type { Vec2 } from '../../core/geometry/vec';
 import { PLAN_TOOL_KEYS, PLAN_TOOLS, type PlanTool } from '../../core/tools';
 import { panBy, pxToMm, screenToDoc, zoomAt } from '../../core/viewport';
 import { activeFloor, documentGridMm, useStore, type SelectionRef } from '../../state/store';
-import { addRoomRect, addShapeRoom, addWallChain, deleteSelection } from '../../state/actions';
+import {
+  addRoomRect,
+  addShapeRoom,
+  addWallChain,
+  commitWallTransform,
+  deleteSelection,
+  previewWallTransform,
+} from '../../state/actions';
 import { DraftLayer } from './DraftLayer';
 import { GridLayer } from './GridLayer';
 import { PlacementLayer } from './PlacementLayer';
@@ -69,6 +76,7 @@ export function PlanStage() {
     snapHints,
     selection,
     measurement,
+    transform,
   } = useStore(
     useShallow((s) => ({
       doc: s.doc,
@@ -81,6 +89,7 @@ export function PlanStage() {
       snapHints: s.snapHints,
       selection: s.selection,
       measurement: s.measurement,
+      transform: s.transform,
     })),
   );
 
@@ -133,12 +142,19 @@ export function PlanStage() {
       const pos = stage.getPointerPosition();
       if (!pos) return null;
 
-      const raw = screenToDoc(useStore.getState().viewport, pos);
       const state = useStore.getState();
+      const raw = screenToDoc(state.viewport, pos);
+
+      // The draft's own points are snap targets too. Without them, closing a wall
+      // loop only works when the final click happens to land in the same grid cell
+      // as the start — and never at all with the grid off or Alt held.
+      const inFlight =
+        state.draft?.tool === 'wall' ? [...snapCandidates, ...state.draft.points] : snapCandidates;
+
       const ctx: SnapContext = {
         gridMm: documentGridMm(state.doc),
         gridEnabled: state.gridEnabled,
-        points: snapCandidates,
+        points: inFlight,
         toleranceMm: pxToMm(state.viewport, DEFAULT_SNAP_TOLERANCE_PX),
         angleStepDeg: state.angleStepDeg,
         suppressed: state.snapSuppressed,
@@ -148,6 +164,24 @@ export function PlanStage() {
     },
     [snapCandidates],
   );
+
+  // ---- transform ---------------------------------------------------------
+  /** Begin a wall drag. The document is untouched until the pointer is released. */
+  const beginTransform = (wallId: string, end: 'a' | 'b' | 'both') => {
+    const state = useStore.getState();
+    const wall = activeFloor(state).walls.find((w) => w.id === wallId);
+    const grab = state.cursor;
+    if (!wall || !grab) return;
+
+    state.setTransform({
+      wallId,
+      end,
+      grab,
+      origin: { a: wall.a, b: wall.b },
+      a: wall.a,
+      b: wall.b,
+    });
+  };
 
   // ---- pointer -----------------------------------------------------------
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -236,11 +270,17 @@ export function PlanStage() {
       return;
     }
 
-    const snapped = snapAt(stage, draftAnchor());
+    const store = useStore.getState();
+    const dragging = store.transform;
+    const snapped = snapAt(stage, dragging && dragging.end !== 'both' ? undefined : draftAnchor());
     if (!snapped) return;
 
-    const store = useStore.getState();
     store.setCursor(snapped.point, snapped.hints);
+
+    if (dragging) {
+      store.setTransform(previewWallTransform(dragging, snapped.point));
+      return;
+    }
 
     const current = store.draft;
     if (current) store.setDraft({ ...current, cursor: snapped.point });
@@ -257,6 +297,14 @@ export function PlanStage() {
     }
 
     const store = useStore.getState();
+
+    const dragging = store.transform;
+    if (dragging) {
+      commitWallTransform(dragging);
+      store.setTransform(null);
+      return;
+    }
+
     const current = store.draft;
     if (!current) return;
 
@@ -327,6 +375,7 @@ export function PlanStage() {
 
       if (e.key === 'Escape') {
         store.setDraft(null);
+        store.setTransform(null);
         store.clearSelection();
         lastClickPx.current = null;
         return;
@@ -395,7 +444,15 @@ export function PlanStage() {
         onMouseUp={onMouseUp}
         onMouseLeave={() => {
           finishPan();
-          useStore.getState().setCursor(null);
+          const store = useStore.getState();
+          // Commit rather than discard: the pointer leaving the canvas is not a
+          // cancel, and silently reverting a drag the user finished off-screen
+          // would look like the app dropped it.
+          if (store.transform) {
+            commitWallTransform(store.transform);
+            store.setTransform(null);
+          }
+          store.setCursor(null);
         }}
         onWheel={onWheel}
         onContextMenu={(e) => e.evt.preventDefault()}
@@ -421,7 +478,10 @@ export function PlanStage() {
           displayUnit={doc.displayUnit}
           selection={selection}
           interactive={structureInteractive}
+          transform={transform}
           onSelect={onSelect}
+          onGrabWall={(wallId) => beginTransform(wallId, 'both')}
+          onGrabEndpoint={(wallId, end) => beginTransform(wallId, end)}
         />
 
         <PlacementLayer

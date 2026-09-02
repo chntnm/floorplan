@@ -58,6 +58,24 @@ export const HISTORY_LIMIT = 200;
 
 export type Measurement = { from: { x: number; y: number }; to: { x: number; y: number } };
 
+/**
+ * A wall being dragged, held as preview geometry in the editor slice.
+ *
+ * The document keeps the original until the pointer is released, so a drag across the
+ * whole plan is still one undo step. `end` is which handle is moving; `'both'` is a
+ * body move.
+ */
+export type WallTransform = {
+  wallId: Id;
+  end: 'a' | 'b' | 'both';
+  /** Where the drag started, in document mm — the reference for a body move. */
+  grab: { x: number; y: number };
+  /** The wall as it was when the drag began, so a body move is always absolute. */
+  origin: { a: { x: number; y: number }; b: { x: number; y: number } };
+  a: { x: number; y: number };
+  b: { x: number; y: number };
+};
+
 export type StoreState = {
   // -- document slice ------------------------------------------------------
   doc: SpaceDocument;
@@ -92,6 +110,8 @@ export type StoreState = {
   wallDefaults: WallDefaults;
   /** The last completed measurement, held until the next one or a tool change. */
   measurement: Measurement | null;
+  /** The wall drag in flight, if any. */
+  transform: WallTransform | null;
 
   setEditMode: (mode: EditMode) => void;
   setViewMode: (mode: ViewMode) => void;
@@ -107,6 +127,7 @@ export type StoreState = {
   setGridEnabled: (on: boolean) => void;
   setSnapSuppressed: (on: boolean) => void;
   setMeasurement: (m: Measurement | null) => void;
+  setTransform: (t: WallTransform | null) => void;
   zoomToFit: () => void;
 };
 
@@ -196,6 +217,7 @@ export const useStore = create<StoreState>((set, get) => ({
       dirty: true,
       selection: pruneSelection(next, selection),
       draft: null,
+      transform: null,
     });
   },
 
@@ -212,6 +234,7 @@ export const useStore = create<StoreState>((set, get) => ({
       dirty: true,
       selection: pruneSelection(next, selection),
       draft: null,
+      transform: null,
     });
   },
 
@@ -223,6 +246,7 @@ export const useStore = create<StoreState>((set, get) => ({
       dirty: false,
       selection: [],
       draft: null,
+      transform: null,
       measurement: null,
       cursor: null,
       snapHints: [],
@@ -236,6 +260,7 @@ export const useStore = create<StoreState>((set, get) => ({
       dirty: false,
       selection: [],
       draft: null,
+      transform: null,
       measurement: null,
       cursor: null,
       snapHints: [],
@@ -260,14 +285,21 @@ export const useStore = create<StoreState>((set, get) => ({
   snapSuppressed: false,
   wallDefaults: DEFAULT_WALL_DEFAULTS,
   measurement: null,
+  transform: null,
 
   setEditMode: (editMode) =>
     // Structure tools have no meaning in furnish mode, and a half-drawn wall would
     // otherwise survive the switch and commit into a locked layer.
-    set({ editMode, draft: null, selection: [], tool: editMode === 'plan' ? get().tool : 'select' }),
+    set({
+      editMode,
+      draft: null,
+      transform: null,
+      selection: [],
+      tool: editMode === 'plan' ? get().tool : 'select',
+    }),
 
   setViewMode: (viewMode) => set({ viewMode }),
-  setTool: (tool) => set({ tool, draft: null, measurement: null }),
+  setTool: (tool) => set({ tool, draft: null, transform: null, measurement: null }),
   setShapeKind: (shapeKind) => set({ shapeKind, tool: 'shape', draft: null }),
   setViewport: (viewport) => set({ viewport }),
   setStageSize: (stageSize) => set({ stageSize }),
@@ -289,6 +321,7 @@ export const useStore = create<StoreState>((set, get) => ({
   setGridEnabled: (gridEnabled) => set({ gridEnabled }),
   setSnapSuppressed: (snapSuppressed) => set({ snapSuppressed }),
   setMeasurement: (measurement) => set({ measurement }),
+  setTransform: (transform) => set({ transform }),
 
   zoomToFit: () => {
     const state = get();

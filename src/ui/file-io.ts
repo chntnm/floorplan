@@ -19,8 +19,18 @@ export function fileNameFor(doc: SpaceDocument): string {
 }
 
 export function saveDocument(doc: SpaceDocument, appVersion?: string): void {
-  // Phase 2 has no assets — backgrounds arrive in phase 3, and `writeSpace` will
-  // carry them without any change here.
+  // Nothing creates assets yet, so there is nowhere to read their bytes from. The
+  // moment PDF import lands in phase 3 this becomes reachable, and writing `{}` would
+  // silently produce a file that reopens with a background pointing at an image that
+  // is not in it — the same hole `writeSpaceJson` already refuses. Fail loudly here
+  // instead, and wire the real asset store when phase 3 creates one.
+  if (doc.assets.length > 0) {
+    throw new SpaceFileError(
+      `Saving assets is not implemented yet: this space references ${doc.assets.length} ` +
+        `file(s) that would be lost. (Phase 3 wires the asset store.)`,
+    );
+  }
+
   const bytes = writeSpace({ document: doc, assets: {} }, appVersion);
 
   // `bytes.buffer` may be a pooled ArrayBuffer larger than the data; slice to the

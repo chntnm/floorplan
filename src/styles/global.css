@@ -92,6 +92,28 @@ body {
 
 .topbar__doc {
   color: var(--text-dim);
+  font: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 3px 6px;
+  min-width: 0;
+}
+
+.topbar__doc:hover {
+  border-color: var(--border);
+}
+
+.topbar__doc:focus {
+  outline: none;
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+.topbar__dirty {
+  color: var(--accent);
+  width: 8px;
 }
 
 .topbar__group {

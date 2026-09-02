@@ -9,7 +9,7 @@
 import type { Room, Wall } from '../core/document';
 import { commitRoomRect, commitShapeRoom, commitWallChain, type ShapeKind } from '../core/tools';
 import type { Vec2 } from '../core/geometry/vec';
-import { activeFloor, useStore, type SelectionRef } from './store';
+import { activeFloor, useStore, type SelectionRef, type WallTransform } from './store';
 
 function withActiveFloor(label: string, fn: (floor: ReturnType<typeof activeFloor>) => void): void {
   const { mutate, doc } = useStore.getState();
@@ -106,13 +106,46 @@ export function setRoomName(roomId: string, name: string): void {
   });
 }
 
-/** Move a wall endpoint. Called once on drag release, never during the drag. */
-export function moveWallEndpoint(wallId: string, end: 'a' | 'b', to: Vec2): void {
-  const rounded = { x: Math.round(to.x), y: Math.round(to.y) };
-  useStore.getState().mutate('Move wall end', (draft) => {
-    for (const floor of draft.floors) {
-      const wall = floor.walls.find((w) => w.id === wallId);
-      if (wall) wall[end] = rounded;
+/**
+ * Commit a wall drag. Called once on release, never during the drag.
+ *
+ * A click that never moved would otherwise land an undo entry that changes nothing —
+ * immer records a patch for an assignment even when the value is deep-equal — so an
+ * unchanged wall is skipped here rather than filtered later.
+ */
+export function commitWallTransform(transform: WallTransform): void {
+  const a = { x: Math.round(transform.a.x), y: Math.round(transform.a.y) };
+  const b = { x: Math.round(transform.b.x), y: Math.round(transform.b.y) };
+
+  const floor = activeFloor(useStore.getState());
+  const existing = floor.walls.find((w) => w.id === transform.wallId);
+  if (!existing) return;
+  if (existing.a.x === a.x && existing.a.y === a.y && existing.b.x === b.x && existing.b.y === b.y) {
+    return;
+  }
+
+  const label = transform.end === 'both' ? 'Move wall' : 'Move wall end';
+  useStore.getState().mutate(label, (draft) => {
+    for (const f of draft.floors) {
+      const wall = f.walls.find((w) => w.id === transform.wallId);
+      if (wall) {
+        wall.a = a;
+        wall.b = b;
+      }
     }
   });
+}
+
+/** The wall geometry a drag currently previews, given the snapped pointer position. */
+export function previewWallTransform(transform: WallTransform, at: Vec2): WallTransform {
+  if (transform.end === 'both') {
+    const dx = at.x - transform.grab.x;
+    const dy = at.y - transform.grab.y;
+    return {
+      ...transform,
+      a: { x: transform.origin.a.x + dx, y: transform.origin.a.y + dy },
+      b: { x: transform.origin.b.x + dx, y: transform.origin.b.y + dy },
+    };
+  }
+  return { ...transform, [transform.end]: at } as WallTransform;
 }

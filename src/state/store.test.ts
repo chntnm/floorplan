@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { activeFloor, floorBounds, useStore, HISTORY_LIMIT } from './store';
-import { addRoomRect, addShapeRoom, addWallChain, deleteSelection, setRoomName } from './actions';
+import {
+  addRoomRect,
+  addShapeRoom,
+  addWallChain,
+  commitWallTransform,
+  deleteSelection,
+  previewWallTransform,
+  renameDocument,
+  setRoomName,
+} from './actions';
+import type { WallTransform } from './store';
 import { DEFAULT_SCALE, DEFAULT_VIEWPORT, screenToDoc } from '../core/viewport';
 import { readSpaceJson, writeSpaceJson } from '../core/space-file';
 
@@ -190,7 +200,89 @@ describe('deleting a wall', () => {
   });
 });
 
+describe('wall transform', () => {
+  function grabWall(end: 'a' | 'b' | 'both'): WallTransform {
+    const wall = addWallChain([
+      { x: 0, y: 0 },
+      { x: 4000, y: 0 },
+    ])[0]!;
+    return {
+      wallId: wall.id,
+      end,
+      grab: { x: 2000, y: 0 },
+      origin: { a: wall.a, b: wall.b },
+      a: wall.a,
+      b: wall.b,
+    };
+  }
+
+  it('moves one endpoint and leaves the other alone', () => {
+    const moved = previewWallTransform(grabWall('b'), { x: 6000, y: 0 });
+    commitWallTransform(moved);
+
+    expect(floor().walls[0]!.a).toEqual({ x: 0, y: 0 });
+    expect(floor().walls[0]!.b).toEqual({ x: 6000, y: 0 });
+  });
+
+  it('translates the whole wall by the drag delta', () => {
+    const moved = previewWallTransform(grabWall('both'), { x: 2500, y: 1000 });
+    commitWallTransform(moved);
+
+    expect(floor().walls[0]!.a).toEqual({ x: 500, y: 1000 });
+    expect(floor().walls[0]!.b).toEqual({ x: 4500, y: 1000 });
+  });
+
+  it('measures a body move from the original, not the last frame', () => {
+    // Otherwise a drag that reverses direction accumulates instead of tracking.
+    const start = grabWall('both');
+    const half = previewWallTransform(start, { x: 3000, y: 0 });
+    const back = previewWallTransform(half, { x: 2000, y: 0 });
+    expect(back.a).toEqual({ x: 0, y: 0 });
+  });
+
+  it('is one undo step for a whole drag', () => {
+    const start = grabWall('b');
+    expect(useStore.getState().past).toHaveLength(1); // the wall itself
+
+    // Every intermediate frame is a preview; only the last is committed.
+    let live = start;
+    for (let x = 4000; x <= 6000; x += 25) live = previewWallTransform(live, { x, y: 0 });
+    commitWallTransform(live);
+
+    expect(useStore.getState().past).toHaveLength(2);
+    useStore.getState().undo();
+    expect(floor().walls[0]!.b).toEqual({ x: 4000, y: 0 });
+  });
+
+  it('does not record a press that never moved', () => {
+    // immer writes a patch for an assignment even when the value is deep-equal, so
+    // clicking a wall would otherwise leave a do-nothing entry on the stack.
+    const start = grabWall('both');
+    commitWallTransform(previewWallTransform(start, start.grab));
+    expect(useStore.getState().past).toHaveLength(1);
+  });
+
+  it('rounds to integer millimetres on commit', () => {
+    commitWallTransform(previewWallTransform(grabWall('b'), { x: 5999.6, y: 0.4 }));
+    expect(floor().walls[0]!.b).toEqual({ x: 6000, y: 0 });
+  });
+
+  it('ignores a wall that was deleted mid-drag', () => {
+    const start = grabWall('b');
+    deleteSelection([{ kind: 'wall', id: start.wallId }]);
+    expect(() => commitWallTransform(previewWallTransform(start, { x: 6000, y: 0 }))).not.toThrow();
+    expect(floor().walls).toHaveLength(0);
+  });
+});
+
 describe('document lifecycle', () => {
+  it('renames the document as one undo step', () => {
+    renameDocument('Maple Street');
+    expect(useStore.getState().doc.title).toBe('Maple Street');
+    useStore.getState().undo();
+    expect(useStore.getState().doc.title).toBe('Untitled space');
+  });
+
   it('marks dirty on change and clean on save', () => {
     expect(useStore.getState().dirty).toBe(false);
     addWallChain(CHAIN);

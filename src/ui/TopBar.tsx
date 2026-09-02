@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   EDIT_MODES,
@@ -7,6 +7,7 @@ import {
   VIEW_MODE_LABELS,
 } from '../core/modes';
 import { useStore } from '../state/store';
+import { renameDocument } from '../state/actions';
 import { openDocumentFile, saveDocument, SPACE_EXTENSION } from './file-io';
 
 export function TopBar() {
@@ -23,9 +24,24 @@ export function TopBar() {
     })),
   );
 
+  // Held locally while typing so a rename is one undo step, not one per keystroke —
+  // and so the filename a save produces is the one you actually named it.
+  const [draftTitle, setDraftTitle] = useState(doc.title);
+  useEffect(() => setDraftTitle(doc.title), [doc.id, doc.title]);
+
+  const commitTitle = () => {
+    const next = draftTitle.trim();
+    if (next && next !== doc.title) renameDocument(next);
+    else setDraftTitle(doc.title);
+  };
+
   const onSave = () => {
-    saveDocument(doc);
-    useStore.getState().markSaved();
+    try {
+      saveDocument(doc);
+      useStore.getState().markSaved();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not save this space.');
+    }
   };
 
   const onOpen = async (file: File) => {
@@ -44,9 +60,24 @@ export function TopBar() {
       <div className="topbar__brand">
         <span className="topbar__mark" aria-hidden="true" />
         <span className="topbar__title">roomplan</span>
-        <span className="topbar__doc" data-testid="doc-title">
-          {doc.title}
-          {dirty ? ' •' : ''}
+        <input
+          className="topbar__doc"
+          data-testid="doc-title"
+          aria-label="Space name"
+          value={draftTitle}
+          size={Math.max(12, draftTitle.length + 1)}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          onBlur={commitTitle}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') {
+              setDraftTitle(doc.title);
+              e.currentTarget.blur();
+            }
+          }}
+        />
+        <span className="topbar__dirty" data-testid="dirty-flag">
+          {dirty ? '•' : ''}
         </span>
       </div>
 

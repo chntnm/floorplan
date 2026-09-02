@@ -6,7 +6,7 @@ import { wallOutline } from '../../core/geometry/wall';
 import { normalize, perp, sub } from '../../core/geometry/vec';
 import { formatArea, formatLength, type DisplayUnit } from '../../core/units';
 import { docToScreen, flattenToScreen, type Viewport } from '../../core/viewport';
-import type { SelectionRef } from '../../state/store';
+import type { SelectionRef, WallTransform } from '../../state/store';
 import type { PlanTheme } from './theme';
 
 type Props = {
@@ -17,7 +17,11 @@ type Props = {
   selection: SelectionRef[];
   /** False in furnish mode — the structure renders but does not accept clicks. */
   interactive: boolean;
+  /** The drag in flight, previewed here while the document still holds the original. */
+  transform: WallTransform | null;
   onSelect: (ref: SelectionRef, additive: boolean) => void;
+  onGrabWall: (wallId: string) => void;
+  onGrabEndpoint: (wallId: string, end: 'a' | 'b') => void;
 };
 
 function isSelected(selection: SelectionRef[], kind: SelectionRef['kind'], id: string): boolean {
@@ -56,9 +60,19 @@ export function StructureLayer({
   displayUnit,
   selection,
   interactive,
+  transform,
   onSelect,
+  onGrabWall,
+  onGrabEndpoint,
 }: Props) {
-  const wallsById = new Map(floor.walls.map((w) => [w.id, w]));
+  // A wall being dragged renders from the preview; the document still has the
+  // original until the pointer is released.
+  const walls = transform
+    ? floor.walls.map((w) =>
+        w.id === transform.wallId ? { ...w, a: transform.a, b: transform.b } : w,
+      )
+    : floor.walls;
+  const wallsById = new Map(walls.map((w) => [w.id, w]));
 
   return (
     <Layer listening={interactive}>
@@ -93,7 +107,7 @@ export function StructureLayer({
         );
       })}
 
-      {floor.walls.map((wall) => {
+      {walls.map((wall) => {
         let points: number[];
         try {
           points = flattenToScreen(viewport, wallOutline(wall).pts);
@@ -114,6 +128,9 @@ export function StructureLayer({
             onMouseDown={(e) => {
               e.cancelBubble = true;
               onSelect({ kind: 'wall', id: wall.id }, e.evt.shiftKey);
+              // Selecting and grabbing are the same gesture; a press that never moves
+              // commits nothing, because the commit skips an unchanged wall.
+              if (!e.evt.shiftKey) onGrabWall(wall.id);
             }}
           />
         );
@@ -143,8 +160,10 @@ export function StructureLayer({
         );
       })}
 
-      {/* Endpoint handles, so a selected wall reads as something you could grab. */}
-      {floor.walls
+      {/* Endpoint handles. These grab — a handle that only looks draggable is worse
+          than no handle at all. `hitStrokeWidth` gives them a forgiving target
+          without drawing a larger dot. */}
+      {walls
         .filter((w) => isSelected(selection, 'wall', w.id))
         .flatMap((wall) =>
           (['a', 'b'] as const).map((end) => {
@@ -158,7 +177,11 @@ export function StructureLayer({
                 fill={theme.selection}
                 stroke="#fff"
                 strokeWidth={1}
-                listening={false}
+                hitStrokeWidth={12}
+                onMouseDown={(e) => {
+                  e.cancelBubble = true;
+                  onGrabEndpoint(wall.id, end);
+                }}
               />
             );
           }),

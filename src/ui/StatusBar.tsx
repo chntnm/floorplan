@@ -47,8 +47,10 @@ export function StatusBar() {
           ? `${formatLength(cursor.x, unit)}, ${formatLength(cursor.y, unit)}`
           : '—'}
       </span>
+      {/* The flag gates snapping, not grid drawing — the grid stays on screen as a
+          reference either way, so the readout says "Snap" like the palette button. */}
       <span data-testid="grid-readout">
-        Grid {gridEnabled ? formatLength(step, unit) : 'off'}
+        Snap {gridEnabled ? formatLength(step, unit) : 'off'}
       </span>
       {/* 100% is the scale a fresh document opens at, not one pixel per millimetre —
           the latter would read as 5% on first load and mean nothing to anyone. */}
