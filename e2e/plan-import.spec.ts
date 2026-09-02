@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { docToPage } from './coords';
 import { makePdf, makePng } from './fixtures';
 
 /**
@@ -15,19 +16,10 @@ import { makePdf, makePng } from './fixtures';
  *   plan becomes 400 × 76.2 = 30480mm wide — exactly 100 feet, which is what the
  *   status bar is asserted to read.
  *
- * Import deliberately does not touch the viewport, so the screen↔document mapping
- * documented in `plan-editor.spec.ts` still holds after one.
+ * The screen-to-document mapping comes from `./coords`; import deliberately does not
+ * touch the viewport, so it still holds after one.
  */
-const SCALE = 0.05;
-const ORIGIN = { x: 120, y: 100 };
-
 const PLAN_PNG = { width: 400, height: 300 };
-
-async function docToPage(stage: Locator, mm: { x: number; y: number }) {
-  const box = await stage.boundingBox();
-  if (!box) throw new Error('plan stage has no bounding box');
-  return { x: box.x + ORIGIN.x + mm.x * SCALE, y: box.y + ORIGIN.y + mm.y * SCALE };
-}
 
 async function importPng(page: Page, name = 'plan.png') {
   await page.getByLabel('Import a floor plan').setInputFiles({

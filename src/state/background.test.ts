@@ -184,6 +184,33 @@ describe('background properties', () => {
     expect(useStore.getState().past).toHaveLength(before);
   });
 
+  it('folds a slider drag into one entry but does not swallow the edit next to it', () => {
+    // Coalescing keys on the label alone, so this is the case that would break it:
+    // a different edit landing between two slider frames must not be absorbed by
+    // the second one and lost.
+    importPlan();
+    const base = useStore.getState().past.length;
+
+    setBackgroundOpacity(0.8);
+    setBackgroundOpacity(0.7); // same label — folds into the entry above
+    nudgeBackgroundRotation(0.5);
+    setBackgroundOpacity(0.6); // different label above it, so a new entry
+
+    expect(useStore.getState().past).toHaveLength(base + 3);
+
+    useStore.getState().undo();
+    expect(floor().background?.opacity).toBeCloseTo(0.7, 9);
+    expect(floor().background?.transform.rotationDeg).toBeCloseTo(0.5, 9);
+
+    useStore.getState().undo();
+    expect(floor().background?.transform.rotationDeg).toBe(0);
+    expect(floor().background?.opacity).toBeCloseTo(0.7, 9);
+
+    // And the folded pair undoes as one, back to where the drag started.
+    useStore.getState().undo();
+    expect(floor().background?.opacity).toBeCloseTo(0.45, 9);
+  });
+
   it('accumulates rotation nudges', () => {
     importPlan();
     nudgeBackgroundRotation(0.5);
