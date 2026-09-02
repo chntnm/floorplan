@@ -193,7 +193,6 @@ body {
 
 .viewport[data-view='space3d'] {
   grid-template-rows: 1fr;
-  place-items: center;
 }
 
 .viewport__placeholder {
@@ -684,4 +683,78 @@ body {
 
 .issue[data-severity='blocking'] .issue__button {
   border-left-color: #c0392b;
+}
+
+/* ---------- space view ---------- */
+
+.space {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The canvas fills its cell and is allowed to shrink; without `min-height: 0` a
+   grid item refuses to go below its content size and the canvas grows forever
+   on every resize. */
+.space__canvas {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface-2);
+  touch-action: none;
+}
+
+.space__canvas canvas {
+  display: block;
+  outline: none;
+}
+
+.space[data-mode='walk'] .space__canvas,
+.space[data-mode='fly'] .space__canvas {
+  cursor: grab;
+}
+
+.hud {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.hud__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hud__row--readout {
+  color: var(--text-dim);
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud__row--views input {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  min-width: 120px;
+}
+
+.hud__view {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.hud__help {
+  margin: 0;
+  color: var(--text-dim);
 }

@@ -19,6 +19,8 @@ import type {
 } from '../core/document';
 import { createOpening, type OpeningDefaults } from '../core/openings';
 import { nearestWall, projectOntoWall } from '../core/geometry/wall';
+import { createSavedView, uniqueViewName, type SpaceCamera } from '../core/views';
+import type { Mount } from '../core/document';
 import { createCatalogItem, type ItemDraft } from '../core/catalog';
 import { snapPlacement, snapRotation, type PlacementSnapContext } from '../core/placement-snap';
 import { worldOutline } from '../core/placement';
@@ -502,15 +504,136 @@ export function placementSnapContext(
 }
 
 /**
+ * How high a wall-mounted item hangs when nothing more specific is known.
+ *
+ * Roughly the centre of a TV or the middle shelf of a run — high enough to read as
+ * mounted rather than as sitting on the floor, and always editable in the panel.
+ */
+export const DEFAULT_WALL_MOUNT_MM = 1200;
+
+/** How near a wall an item has to land for "wall-mounted" to mean anything. */
+export const WALL_MOUNT_REACH_MM = 900;
+
+/**
+ * The mount an item lands on, honouring the default recorded on the catalog item.
+ *
+ * A wall mount with no wall within reach falls back to the floor and **says so** —
+ * returning a reason rather than quietly storing a `wallId` it guessed. An item
+ * attached to a wall the user did not choose is worse than one on the floor, because
+ * moving that wall would then move the item.
+ */
+export function resolveDropMount(
+  floor: ReturnType<typeof activeFloor>,
+  item: CatalogItem,
+  position: Vec2,
+): { mount: Mount; elevation: number; notice: string | null } {
+  switch (item.defaultMount) {
+    case 'wall': {
+      const wall = nearestWall(floor.walls, position, WALL_MOUNT_REACH_MM);
+      if (!wall) {
+        return {
+          mount: { kind: 'floor' },
+          elevation: 0,
+          notice: `${item.name} is wall-mounted, but there is no wall here. It is on the floor — drop it against a wall, or set the mount in the panel.`,
+        };
+      }
+      return {
+        mount: { kind: 'wall', wallId: wall.id },
+        elevation: DEFAULT_WALL_MOUNT_MM,
+        notice: null,
+      };
+    }
+    case 'ceiling':
+      // Flush to the ceiling; the drop is the number the user then adjusts.
+      return { mount: { kind: 'ceiling', drop: 0 }, elevation: 0, notice: null };
+    default:
+      return { mount: { kind: 'floor' }, elevation: 0, notice: null };
+  }
+}
+
+/**
+ * Change what a placement is attached to.
+ *
+ * Returns a reason when the mount could not be applied, for the panel to show.
+ * Surface mounts are not settable here: a surface mount needs a specific host, which
+ * is chosen by dragging the item onto it, not by picking a word from a list.
+ */
+export function setPlacementMount(placementId: Id, kind: Mount['kind']): string | null {
+  const state = useStore.getState();
+  const floor = activeFloor(state);
+  const placement = floor.placements.find((p) => p.id === placementId);
+  if (!placement) return null;
+
+  let mount: Mount;
+  let elevation = 0;
+
+  if (kind === 'wall') {
+    const wall = nearestWall(floor.walls, placement.position, WALL_MOUNT_REACH_MM);
+    if (!wall) return 'There is no wall near enough to mount this on. Move it against one first.';
+    mount = { kind: 'wall', wallId: wall.id };
+    elevation = placement.elevation || DEFAULT_WALL_MOUNT_MM;
+  } else if (kind === 'ceiling') {
+    mount = { kind: 'ceiling', drop: 0 };
+  } else if (kind === 'surface') {
+    return 'Drag this onto the thing you want it to sit on.';
+  } else {
+    mount = { kind: 'floor' };
+  }
+
+  useStore.getState().mutate('Change mount', (draft) => {
+    for (const f of draft.floors) {
+      const target = f.placements.find((p) => p.id === placementId);
+      if (!target) continue;
+      target.mount = mount;
+      target.elevation = elevation;
+    }
+  });
+  return null;
+}
+
+/** How far a ceiling-mounted item hangs below the ceiling. */
+export function setCeilingDrop(placementId: Id, dropMm: number): void {
+  const next = Math.max(0, Math.round(dropMm));
+  useStore.getState().mutate('Drop', (draft) => {
+    for (const floor of draft.floors) {
+      const placement = floor.placements.find((p) => p.id === placementId);
+      if (placement?.mount.kind === 'ceiling') placement.mount = { kind: 'ceiling', drop: next };
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Saved views (PLAN.md 10.3)
+// ---------------------------------------------------------------------------
+
+/** Bookmark a camera. Document state — a bookmark travels with the file. */
+export function addSavedView(name: string, camera: SpaceCamera): void {
+  const { doc } = useStore.getState();
+  const view = createSavedView(
+    newId(),
+    uniqueViewName(name.trim() || 'View', doc.savedViews),
+    camera,
+  );
+  useStore.getState().mutate(`Save view ${view.name}`, (draft) => {
+    draft.savedViews.push(view);
+  });
+}
+
+export function removeSavedView(id: Id): void {
+  useStore.getState().mutate('Remove view', (draft) => {
+    draft.savedViews = draft.savedViews.filter((v) => v.id !== id);
+  });
+}
+
+/**
  * Drop an item onto the plan.
  *
  * **This is where the calibration gate stops being decorative.** A floor whose plan
  * has no scale refuses, with the same sentence the validation panel shows, because
  * anything placed on an unscaled raster is placed at a size that means nothing.
  *
- * Wall and ceiling mounts are not reachable from here yet — they need a wall to host
- * against and a ceiling to hang from, which is phase 5. A wall-mounted item dropped
- * on the plan lands on the floor and can be raised there.
+ * An item whose catalog entry says it is wall- or ceiling-mounted lands mounted, not
+ * on the floor — `resolveDropMount` decides, and reports when it could not.
  */
 export function addPlacement(
   itemId: Id,
@@ -524,6 +647,15 @@ export function addPlacement(
   const item = findItem(state.doc, itemId);
   if (!item) return null;
 
+  // An explicit mount wins over the item's own default: it means the gesture found
+  // something specific — a surface to stand on — and that beats a preference recorded
+  // when the item was created. Callers must not pass a floor mount just because they
+  // have one to hand; absent means "use the item's default".
+  const resolved = options.mount
+    ? { mount: options.mount, elevation: 0, notice: null }
+    : resolveDropMount(floor, item, position);
+  useStore.getState().setNotice(resolved.notice);
+
   const placement: Placement = {
     id: newId(),
     itemId,
@@ -532,8 +664,8 @@ export function addPlacement(
     // Normalized on the way in: a wall snap solves an angle with atan2, which happily
     // returns -90, and nobody wants to read that in the properties panel.
     rotation: normalizeRotation(options.rotation ?? 0),
-    mount: options.mount ?? { kind: 'floor' },
-    elevation: 0,
+    mount: resolved.mount,
+    elevation: resolved.elevation,
   };
 
   const floorId = floor.id;

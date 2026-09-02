@@ -635,13 +635,32 @@ Two camera modes, toggled with `Tab`:
 ```
 ↑ / W        forward            eye height 1650mm, follows floor datum
 ↓ / S        back               collision against walls + object volumes
-← / →        strafe             capsule radius 250mm
+← / →        turn               capsule radius 250mm
 A / D        strafe
-Q / E        turn               mouse look via PointerLockControls
+Q / E        turn               drag-to-look for pitch and fine aim
 Shift        run (2×)
-Space        step up — clears obstacles under 450mm (sitting height)
-C            crouch — eye height 1100mm, for looking under things
+Space        step up — raises the body interval's floor to 450mm
+C            crouch — eye height 1100mm, body top 1250mm
 ```
+
+**Built, with two deliberate departures.** The arrow keys **turn** rather than strafe:
+the requirement is arrow-key traversal, and with turning bound only to `Q`/`E` someone
+using the arrows alone can never change direction. `A`/`D` strafe instead. And look is
+**drag-to-look**, not `PointerLockControls` — pointer lock takes over the cursor,
+prompts, and cannot be driven by a test, and click-to-select needs the pointer anyway.
+
+**Step up is not a key that teleports you.** It is the *bottom of the body interval*:
+
+```
+body = [ feet + stepClearance , feet + standingHeight ]     // [200, 1800] normally
+```
+
+With a body of `[0, 1800]` a 5mm rug is a collision — `[0,5]` and `[0,1800]` genuinely
+overlap — and the walker is stopped dead by a carpet. Starting the interval at a
+stride's clearance is what makes every case fall out of one number, the same shape of
+fix as `voidBelowMm`. `Space` raises the clearance to 450 for a deliberate step; `C`
+lowers the *top* to 1250 so you can duck. Ground height then follows whatever is
+underfoot, rising at most a stride and falling as far as there is to fall.
 
 Collision is 2D circle-vs-polygon against every object whose `solidSpan` overlaps the
 walker's body interval `[0, 1800]` — which is exactly why the vertical model has to be
@@ -700,7 +719,7 @@ isolated so neither blocks the core editor.
 | **2** | **Plan editor** — Konva stage, pan/zoom, wall/room/shape tools, dimension tool, grid + snapping, selection and transform (wall endpoint and body drag), mode toggle, undo/redo. Draw a floor plan by hand and save it. Room *reposition* is deliberately not included: rooms and their walls are separate entities, and moving one without the other desynchronises them — redraw instead until phase 8 relates them. |
 | **3** | **Import + calibration** — PDF via pdfjs (dynamically imported, so the 437kB renderer stays off first paint), image import, the blocking calibration gate, background transform/opacity/lock, tracing over a real plan. An uncalibrated background is shown at a nominal 6m width so the reference line is drawable *and* so the transform is invertible before a real scale exists; calibrating rescales about `refA` so the point the user anchored on does not move, and `transform.position` stays a float because rounding it would drift the anchor on every recalibration. Import deliberately does not re-fit the viewport. Deferred: thumbnails and File System Access (phase 9), vector path extraction (v2). |
 | **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap, surface snap, rotation, and 3D overlap warnings. **First genuinely useful build.** Wall snap seats the footprint's *back edge* (local −y) on the wall's near face and rotates to match, never the centre on the centreline. The calibration gate stops being decorative here: `addPlacement` throws `PlacementBlockedError` carrying the same sentence the validation panel shows, and the Place button is disabled rather than offered-and-refused. Deleting a placement re-seats anything surface-mounted on it, so the document never references a host that is gone. Headroom arrives early — `exceedsHeadroom` already existed — but clearance zones (7) and door swing (6) are still out. |
-| **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. |
+| **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. An opening cuts a wall in *elevation*, not in plan, so `ExtrudeGeometry` holes were never the answer: `wallSegments` **splits** the wall into the solid boxes that remain — flank, sill wall, lintel, flank — which needs no CSG and hands the same list to the renderer, the walker and the validation panel. A doorway is passable because the only solid above it starts at 2032mm, with no "is this a door" check anywhere in traversal. The walk simulation deliberately lives *outside* three.js: a plain rAF loop over pure functions, so the camera consumes the walker rather than owning it, the position readout survives a browser with no WebGL, and traversal is testable without a GPU. Deferred and stated rather than claimed: **instancing** (§10.4's 500-at-60fps target is unmeasured — one mesh per solid today), and a real contact-normal collision resolver (moves are retried per axis, so diagonal walls slide stickily). |
 | **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. |
 | **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. |
 | **8** | **Multi-room and multi-floor** — room detection and areas, per-room ceiling heights, floor stacking, ghost underlay, 3D floor toggles. |

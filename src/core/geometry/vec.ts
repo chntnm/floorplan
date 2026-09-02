@@ -61,6 +61,23 @@ export function equals(a: Vec2, b: Vec2, tolerance = 0): boolean {
   return Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance;
 }
 
+/**
+ * Perpendicular distance from a point to a **segment**, not to the infinite line.
+ *
+ * Lives here rather than in `wall.ts` because walls are not the only thing measured
+ * against: the walker's capsule is tested against every polygon edge in the scene,
+ * and that must not have to import a wall to do it.
+ */
+export function distanceToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return distance(p, a);
+
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
+}
+
 export function toDegrees(radians: number): number {
   return (radians * 180) / Math.PI;
 }

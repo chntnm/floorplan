@@ -12,7 +12,8 @@
  */
 
 import polygonClipping from 'polygon-clipping';
-import { bounds, boundsOverlap, polygon, signedArea, type Polygon } from './polygon';
+import { bounds, boundsOverlap, containsPoint, polygon, signedArea, type Polygon } from './polygon';
+import { distanceToSegment, type Vec2 } from './vec';
 
 /** A closed vertical interval in millimetres above the floor datum. */
 export type Span = { bottom: number; top: number };
@@ -95,6 +96,34 @@ export const OVERLAP_TOLERANCE_MM2 = 1;
 
 export function polygonsIntersect(a: Polygon, b: Polygon): boolean {
   return intersectionArea(a, b) > OVERLAP_TOLERANCE_MM2;
+}
+
+/**
+ * Whether a circle overlaps a polygon.
+ *
+ * Inside counts, which is what makes this usable for a walker: a body that has
+ * somehow ended up inside a wall must read as colliding, not as clear because no
+ * edge is within its radius.
+ */
+export function circleIntersects(poly: Polygon, centre: Vec2, radius: number): boolean {
+  const b = bounds(poly);
+  if (
+    centre.x + radius < b.minX ||
+    centre.x - radius > b.maxX ||
+    centre.y + radius < b.minY ||
+    centre.y - radius > b.maxY
+  ) {
+    return false;
+  }
+  if (containsPoint(poly, centre)) return true;
+
+  const pts = poly.pts;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]!;
+    const c = pts[(i + 1) % pts.length]!;
+    if (distanceToSegment(centre, a, c) <= radius) return true;
+  }
+  return false;
 }
 
 export type Volume = {

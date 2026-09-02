@@ -265,7 +265,11 @@ export function PlanStage() {
     try {
       const placement = addPlacement(itemId, snapped?.position ?? raw, {
         rotation: snapped?.rotation ?? 0,
-        ...(snapped ? { mount: snapped.mount } : {}),
+        // Only a mount the *gesture* actually determined — the snap finding a host to
+        // stand on. A wall snap seats the item against the wall but leaves it on the
+        // floor, and passing that `{ kind: 'floor' }` through would override the
+        // item's own default and quietly ground every wall-mounted shelf.
+        ...(snapped && snapped.mount.kind !== 'floor' ? { mount: snapped.mount } : {}),
       });
       if (placement) state.setSelection([{ kind: 'placement', id: placement.id }]);
     } catch (err) {

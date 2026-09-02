@@ -26,8 +26,13 @@ import { ItemForm } from './ItemForm';
  * point at where it goes.
  */
 export function InventoryPanel() {
-  const { doc, editMode, placingItemId } = useStore(
-    useShallow((s) => ({ doc: s.doc, editMode: s.editMode, placingItemId: s.placingItemId })),
+  const { doc, editMode, placingItemId, notice } = useStore(
+    useShallow((s) => ({
+      doc: s.doc,
+      editMode: s.editMode,
+      placingItemId: s.placingItemId,
+      notice: s.notice,
+    })),
   );
 
   const [adding, setAdding] = useState(false);
@@ -88,6 +93,15 @@ export function InventoryPanel() {
       {blocked ? (
         <p className="panel__warn" data-testid="inventory-blocked">
           {blocked}
+        </p>
+      ) : null}
+
+      {/* Set when an action could not do quite what was asked — a wall-mounted item
+          dropped where there is no wall. Said out loud rather than silently done
+          differently. */}
+      {notice ? (
+        <p className="panel__warn" data-testid="inventory-notice">
+          {notice}
         </p>
       ) : null}
 

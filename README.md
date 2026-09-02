@@ -8,10 +8,29 @@ elevation, so a rug under a table is not a collision, a wall shelf at 1400mm doe
 block a desk at 750mm, and a 2100mm bookcase under a 2050mm soffit is a violation the
 app catches.
 
-> **Status: phase 2.** The plan editor works: draw walls, rooms and shapes by hand
-> with grid/angle/endpoint snapping, select and delete, undo/redo, and save to a
-> `.space` file another machine can open. Floor plan import (phase 3), the inventory
-> (phase 4) and the 3D view (phase 5) are not built yet. See [PLAN.md](./PLAN.md).
+> **Status: phase 5.** The whole loop works end to end: import a PDF or image and
+> calibrate it, trace walls and rooms, cut doors and windows, build an inventory,
+> place it with wall and surface snapping, then switch to the space view and walk
+> through the result with the arrow keys. Door swing (phase 6), clearance zones
+> (phase 7) and multi-floor (phase 8) are not built yet. See [PLAN.md](./PLAN.md).
+
+## Walking around
+
+Press **Space** in the view switcher, then **Tab** to cycle orbit → walk → fly.
+
+| Key | Does |
+|-----|------|
+| `↑` `↓` / `W` `S` | walk forward and back |
+| `←` `→` / `Q` `E` | turn |
+| `A` `D` | strafe |
+| `Shift` | run |
+| `C` | crouch — duck under a wall shelf |
+| `Space` | step up — clear something knee-high |
+| `R` `F` | rise and fall, in fly mode |
+| drag | look around |
+
+Collision is genuinely three-dimensional: you walk *over* a rug, *under* a doorway's
+lintel, and *into* a dresser, with no special case for any of them.
 
 ## Quick start
 

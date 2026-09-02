@@ -40,7 +40,10 @@ import type { EditMode, ViewMode } from '../core/modes';
 import { bounds, type Bounds } from '../core/geometry/polygon';
 import { wallOutline } from '../core/geometry/wall';
 import type { Vec2 } from '../core/geometry/vec';
-import type { Mount, OpeningKind } from '../core/document';
+import type { Mount, OpeningKind, SavedView } from '../core/document';
+import type { CameraMode, Walker } from '../core/walk';
+import { decodeCamera, type SpaceCamera } from '../core/views';
+import { toDegrees } from '../core/geometry/vec';
 import type { PlacementSnapHint } from '../core/placement-snap';
 import type { AssetMap } from '../core/space-file';
 import { adoptAssets, clearAssets } from './assets';
@@ -177,6 +180,33 @@ export type StoreState = {
   calibrationRef: CalibrationRef | null;
   /** The placement drag in flight, if any. */
   placementTransform: PlacementTransform | null;
+
+  // -- space view (PLAN.md §10) --------------------------------------------
+  cameraMode: CameraMode;
+  /**
+   * The walker, or null before they have been put anywhere.
+   *
+   * Null rather than an origin default: a plan traced from an imported raster can sit
+   * anywhere, so a walker at 0,0 would routinely start outside the building. The view
+   * seeds this from `defaultStandpoint` the first time it is needed.
+   *
+   * Editor state, not document state. Where you are standing is not something undo
+   * should take away, and a walk across a room would otherwise be several hundred
+   * history entries.
+   */
+  walker: Walker | null;
+  /** Ceilings hide by default — a dollhouse you cannot see into is not useful. */
+  showCeilings: boolean;
+  /**
+   * A camera pose the 3D view should jump to, consumed once and cleared.
+   *
+   * Orbit controls own their own camera state internally, so "go here" cannot be
+   * expressed by setting a value and leaving it — the next drag would fight it. A
+   * one-shot instruction the renderer picks up and clears says exactly what is meant.
+   */
+  pendingCamera: SpaceCamera | null;
+  /** A transient one-line message, shown until the next action replaces it. */
+  notice: string | null;
   /**
    * The catalog item armed for placing — the next click on the plan drops one.
    *
@@ -203,6 +233,12 @@ export type StoreState = {
   setTransform: (t: WallTransform | null) => void;
   setPlacementTransform: (t: PlacementTransform | null) => void;
   setPlacingItem: (itemId: Id | null) => void;
+  setCameraMode: (mode: CameraMode) => void;
+  setWalker: (walker: Walker | null) => void;
+  setShowCeilings: (on: boolean) => void;
+  setPendingCamera: (camera: SpaceCamera | null) => void;
+  setNotice: (notice: string | null) => void;
+  applySavedView: (view: SavedView) => void;
   beginCalibration: () => void;
   setCalibrationRef: (ref: CalibrationRef | null) => void;
   endCalibration: () => void;
@@ -348,6 +384,9 @@ export const useStore = create<StoreState>((set, get) => ({
       calibrationRef: null,
       placementTransform: null,
       placingItemId: null,
+      walker: null,
+      pendingCamera: null,
+      notice: null,
     });
   },
 
@@ -369,6 +408,9 @@ export const useStore = create<StoreState>((set, get) => ({
       placementTransform: null,
       placingItemId: null,
       viewport: DEFAULT_VIEWPORT,
+      walker: null,
+      pendingCamera: null,
+      notice: null,
     });
   },
 
@@ -396,6 +438,11 @@ export const useStore = create<StoreState>((set, get) => ({
   calibrationRef: null,
   placementTransform: null,
   placingItemId: null,
+  cameraMode: 'orbit',
+  walker: null,
+  showCeilings: false,
+  pendingCamera: null,
+  notice: null,
 
   setEditMode: (editMode) =>
     // Structure tools have no meaning in furnish mode, and a half-drawn wall would
@@ -440,6 +487,47 @@ export const useStore = create<StoreState>((set, get) => ({
   // Arming an item cancels a selection drag and vice versa: the next click cannot
   // both drop a new item and grab an existing one.
   setPlacingItem: (placingItemId) => set({ placingItemId, placementTransform: null }),
+
+  setCameraMode: (cameraMode) => set({ cameraMode }),
+  setWalker: (walker) => set({ walker }),
+  setShowCeilings: (showCeilings) => set({ showCeilings }),
+  setPendingCamera: (pendingCamera) => set({ pendingCamera }),
+  setNotice: (notice) => set({ notice }),
+
+  /**
+   * Jump to a bookmarked view.
+   *
+   * Editor state only — a bookmark records where you looked from, and using one is
+   * not an edit to the space. Adding and removing bookmarks *is* a document change,
+   * and lives in `actions.ts` with everything else that touches the document.
+   *
+   * In walk and fly the walker is moved directly, so the pose survives the next frame
+   * of input; in orbit the pose goes to `pendingCamera` for the controls to adopt.
+   */
+  applySavedView: (view) => {
+    const camera = decodeCamera(view.camera);
+    const dx = camera.target.x - camera.position.x;
+    const dy = camera.target.y - camera.position.y;
+    const dz = camera.target.z - camera.position.z;
+    const horizontal = Math.hypot(dx, dy);
+
+    set({
+      cameraMode: camera.mode,
+      pendingCamera: camera,
+      ...(camera.mode === 'orbit'
+        ? {}
+        : {
+            walker: {
+              position: { x: camera.position.x, y: camera.position.y },
+              // The inverse of `forwardVector`: a bearing, not a maths angle.
+              heading: horizontal === 0 ? 0 : toDegrees(Math.atan2(dx, -dy)),
+              pitch: horizontal === 0 ? 0 : toDegrees(Math.atan2(dz, horizontal)),
+              elevation: 0,
+              crouching: false,
+            },
+          }),
+    });
+  },
 
   // Opening the gate cancels whatever was in flight: a half-drawn wall committed
   // against an uncalibrated plan is exactly the geometry the gate exists to stop.

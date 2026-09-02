@@ -93,7 +93,7 @@ export function TopBar() {
         <button type="button" className="seg" onClick={() => fileInput.current?.click()}>
           Open
         </button>
-        <button type="button" className="seg" onClick={onSave}>
+        <button type="button" className="seg" data-testid="save-file" onClick={onSave}>
           Save
         </button>
         <ImportButton disabled={calibrating} />

@@ -7,6 +7,8 @@ import { activeFloor, useStore } from '../state/store';
 import {
   deleteSelection,
   nudgeBackgroundRotation,
+  setCeilingDrop,
+  setPlacementMount,
   updateOpening,
   removeBackground,
   rotatePlacementBy,
@@ -29,7 +31,7 @@ import {
 } from '../core/openings';
 import { hasAsset } from '../state/assets';
 import { LengthInput } from './LengthField';
-import type { OpeningKind } from '../core/document';
+import type { MountKind, OpeningKind } from '../core/document';
 
 const MOUNT_LABELS: Record<string, string> = {
   floor: 'On the floor',
@@ -37,10 +39,6 @@ const MOUNT_LABELS: Record<string, string> = {
   wall: 'Wall-mounted',
   ceiling: 'Hanging',
 };
-
-function mountLabel(kind: string): string {
-  return MOUNT_LABELS[kind] ?? kind;
-}
 
 function hostName(doc: SpaceDocument, floor: Floor, hostId: string): string {
   const host = floor.placements.find((p) => p.id === hostId);
@@ -90,6 +88,7 @@ export function PropertiesPanel() {
 
   // Held locally while typing so a rename is one undo step, not one per keystroke.
   const [draftName, setDraftName] = useState(room?.name ?? '');
+  const [mountError, setMountError] = useState<string | null>(null);
   useEffect(() => setDraftName(room?.name ?? ''), [room?.id, room?.name]);
 
   const commitName = () => {
@@ -235,9 +234,41 @@ export function PropertiesPanel() {
               that field is only authoritative for floor and wall mounts, and a
               surface-mounted item takes its base from whatever it is sitting on. */}
           <Field label="Base" value={formatLength(resolveElevation(doc, placement), unit)} />
-          <Field label="Mount" value={mountLabel(placement.mount.kind)} />
+          <label className="field field--input">
+            <span className="field__label">Mount</span>
+            <select
+              value={placement.mount.kind}
+              aria-label="Mount"
+              onChange={(e) => setMountError(setPlacementMount(placement.id, e.target.value as MountKind))}
+            >
+              <option value="floor">{MOUNT_LABELS.floor}</option>
+              {/* A surface mount names a specific host, which is chosen by dragging
+                  the item onto it — there is nothing sensible to pick from a list.
+                  Shown as the current value, never as a destination. */}
+              <option value="surface" disabled={placement.mount.kind !== 'surface'}>
+                {MOUNT_LABELS.surface}
+              </option>
+              <option value="wall">{MOUNT_LABELS.wall}</option>
+              <option value="ceiling">{MOUNT_LABELS.ceiling}</option>
+            </select>
+          </label>
+          {mountError ? (
+            <p className="panel__warn" role="alert" data-testid="mount-error">
+              {mountError}
+            </p>
+          ) : null}
           {placement.mount.kind === 'surface' ? (
             <Field label="Sitting on" value={hostName(doc, floor, placement.mount.hostId)} />
+          ) : null}
+          {placement.mount.kind === 'wall' ? (
+            <Field
+              label="On wall"
+              value={
+                floor.walls.some((w) => placement.mount.kind === 'wall' && w.id === placement.mount.wallId)
+                  ? 'yes'
+                  : 'a wall that is gone'
+              }
+            />
           ) : null}
 
           <div className="panel__row panel__row--rotate">
@@ -263,15 +294,26 @@ export function PropertiesPanel() {
           </div>
 
           {placement.mount.kind === 'wall' ? (
-            <label className="field field--input">
-              <span className="field__label">Height above floor</span>
-              <input
-                type="number"
-                value={placement.elevation}
-                aria-label="Height above floor in millimetres"
-                onChange={(e) => setPlacementElevation(placement.id, Number(e.target.value))}
-              />
-            </label>
+            <LengthInput
+              label="Height above floor"
+              valueMm={placement.elevation}
+              unit={unit}
+              onCommit={(mm) => setPlacementElevation(placement.id, mm)}
+              testId="placement-elevation"
+            />
+          ) : null}
+
+          {/* How far a pendant hangs below the ceiling. The base is derived from it
+              rather than stored, which is why this edits the drop and the Base field
+              above reads back through `resolveElevation`. */}
+          {placement.mount.kind === 'ceiling' ? (
+            <LengthInput
+              label="Drop below ceiling"
+              valueMm={placement.mount.drop}
+              unit={unit}
+              onCommit={(mm) => setCeilingDrop(placement.id, mm)}
+              testId="placement-drop"
+            />
           ) : null}
 
           {placementItem.canHostSurface ? (

@@ -14,7 +14,11 @@
  */
 
 import { polygon, ensureCounterClockwise, type Polygon } from './polygon';
-import { distance, normalize, perp, sub, type Vec2 } from './vec';
+import { distance, distanceToSegment, normalize, perp, sub, type Vec2 } from './vec';
+
+// Re-exported because it was part of this module's surface before the walker needed
+// it too, and callers should not have to care that it moved down a layer.
+export { distanceToSegment };
 
 export type WallLine = {
   a: Vec2;
@@ -67,17 +71,6 @@ export function wallOutline(wall: WallLine): Polygon {
       { x: wall.a.x - n.x, y: wall.a.y - n.y },
     ]),
   );
-}
-
-/** Perpendicular distance from a point to a segment (not the infinite line). */
-export function distanceToSegment(p: Vec2, a: Vec2, b: Vec2): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return distance(p, a);
-
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
-  return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
 }
 
 /**

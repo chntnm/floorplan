@@ -52,11 +52,10 @@ test.describe('the catalog', () => {
     await page.getByLabel('Width').fill('1.8m');
     await page.getByLabel('Depth').fill('30"');
     await page.getByLabel('Height').fill('900');
-    // Wall and ceiling mounts are stored but not reachable when placing yet, so the
-    // form does not offer them — the same rule as the Place button.
-    // Asserted on the attribute: Playwright reports an <option> as enabled even when
-    // it carries `disabled`, so toBeDisabled() would pass for the wrong reason.
-    await expect(page.getByLabel('Mount').locator('option[value="wall"]')).toHaveAttribute(
+    // Every mount is reachable now that walls can host and there is a ceiling to
+    // hang from. An item that says "wall" lands on a wall when dropped near one, and
+    // on the floor with a note when there is none — never on a wall it guessed.
+    await expect(page.getByLabel('Mount').locator('option[value="wall"]')).not.toHaveAttribute(
       'disabled',
       '',
     );

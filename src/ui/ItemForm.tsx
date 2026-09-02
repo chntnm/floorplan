@@ -158,16 +158,11 @@ export function ItemForm({ unit, initial, submitLabel, onSubmit, onCancel }: Pro
         >
           <option value="floor">Floor</option>
           <option value="surface">On a surface</option>
-          {/* Stored, but not reachable when placing: a wall mount needs a wall to
-              host against and a ceiling mount a ceiling to hang from, which is
-              phase 5. Offering a choice that silently lands the item on the floor
-              is the same mistake as offering a Place button that will be refused. */}
-          <option value="wall" disabled>
-            Wall (phase 5)
-          </option>
-          <option value="ceiling" disabled>
-            Ceiling (phase 5)
-          </option>
+          {/* Both reachable now. An item that says it is wall-mounted lands on the
+              nearest wall when dropped near one, and lands on the floor with a note
+              saying why when there is no wall in reach — never on a wall it guessed. */}
+          <option value="wall">Wall</option>
+          <option value="ceiling">Ceiling</option>
         </select>
       </label>
 
