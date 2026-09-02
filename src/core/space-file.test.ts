@@ -160,7 +160,7 @@ describe('.space container', () => {
     const bytes = writeSpace({ document: fixture(), assets: {} }, '0.1.0');
     const manifest = JSON.parse(strFromU8(unzipSync(bytes)[MANIFEST_ENTRY]!));
     expect(manifest).toMatchObject({
-      app: 'roomplan',
+      app: 'floorplan',
       appVersion: '0.1.0',
       schemaVersion: SCHEMA_VERSION,
       title: 'Test Apartment',

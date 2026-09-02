@@ -1,4 +1,4 @@
-# roomplan
+# floorplan
 
 Spatial planning for real rooms. Import a floor plan, build an inventory of what you
 own, place it, and walk through the result in 3D.

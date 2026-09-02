@@ -59,7 +59,7 @@ export function TopBar() {
     <header className="topbar">
       <div className="topbar__brand">
         <span className="topbar__mark" aria-hidden="true" />
-        <span className="topbar__title">roomplan</span>
+        <span className="topbar__title">floorplan</span>
         <input
           className="topbar__doc"
           data-testid="doc-title"

@@ -4,7 +4,7 @@ import { App } from './App';
 import './styles/global.css';
 
 const rootEl = document.getElementById('root');
-if (!rootEl) throw new Error('roomplan: #root element not found in index.html');
+if (!rootEl) throw new Error('floorplan: #root element not found in index.html');
 
 createRoot(rootEl).render(
   <StrictMode>

@@ -1,6 +1,6 @@
-# roomplan — Implementation Plan
+# floorplan — Implementation Plan
 
-**Location:** `Development/conquerorchin/roomplan/`
+**Location:** `Development/conquerorchin/floorplan/`
 **Status:** Planning — nothing built yet
 **Date:** 2026-09-01
 

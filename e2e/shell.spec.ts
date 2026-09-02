@@ -4,7 +4,7 @@ test.describe('app shell', () => {
   test('boots and renders both panels and the plan editor', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page.getByText('roomplan')).toBeVisible();
+    await expect(page.getByText('floorplan')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Properties' })).toBeVisible();
 
