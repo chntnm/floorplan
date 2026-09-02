@@ -703,9 +703,29 @@ export function previewPlacementTransform(
     ...transform,
     position: snapped.position,
     rotation: snapped.rotation,
-    mount: snapped.mount,
+    mount: draggedMount(transform.origin.mount, snapped.mount),
     hints: snapped.hints,
   };
+}
+
+/**
+ * What a placement is attached to after being dragged.
+ *
+ * The snap only ever reports two things: a *surface* mount when the item landed on
+ * something that can host it, and a floor mount otherwise. A floor mount from the
+ * snap therefore means "no host here", **not** "put this on the floor" — a wall snap
+ * seats the footprint against the wall and still reports floor. Letting it through
+ * would drop a wall-mounted TV to the ground the moment it was nudged 5mm along its
+ * own wall, silently, which is the same shadowing bug the drop path had.
+ *
+ * So: a host wins; otherwise a *surface* mount that found no host has genuinely been
+ * dragged off its host and falls to the floor; and a wall or ceiling mount is left
+ * alone, because moving a thing is not the same as detaching it.
+ */
+function draggedMount(origin: Mount, snapped: Mount): Mount {
+  if (snapped.kind === 'surface') return snapped;
+  if (origin.kind === 'surface') return { kind: 'floor' };
+  return origin;
 }
 
 /**

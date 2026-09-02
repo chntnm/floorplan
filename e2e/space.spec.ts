@@ -187,6 +187,37 @@ test.describe('saved views', () => {
   });
 });
 
+test.describe('the layer toggle', () => {
+  test('does not let a locked wall be selected in 3D either', async ({ page }) => {
+    // The toggle is a property of the document, not of the renderer. Without this,
+    // clicking a wall in furnish mode selects it and the panel offers to delete it —
+    // structure the plan view is refusing to let you touch.
+    await roomWithDoor(page);
+    await page.getByRole('button', { name: 'Arrange furniture', exact: true }).click();
+
+    const canvas = page.locator('.space__canvas canvas');
+    const box = (await canvas.boundingBox())!;
+    // The orbit view frames the whole room, so the middle of the canvas is a wall or
+    // the floor either way — and neither may select while structure is locked.
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    await expect(page.getByTestId('wall-properties')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+  });
+
+  test('still selects a wall in 3D when structure is editable', async ({ page }) => {
+    await roomWithDoor(page);
+
+    const canvas = page.locator('.space__canvas canvas');
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    // Something got selected — the click reaches the scene, so the test above is
+    // asserting a real refusal rather than a raycast that never hit anything.
+    await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeVisible();
+  });
+});
+
 test.describe('mounts', () => {
   test('hangs a wall-mounted item on the wall it was dropped against', async ({ page }) => {
     const stage = page.getByTestId('plan-stage');

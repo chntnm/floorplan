@@ -105,7 +105,15 @@ export type PlacementTransform = {
   mode: 'move' | 'rotate';
   /** Where the drag started, in document mm. */
   grab: Vec2;
-  origin: { position: Vec2; rotation: number };
+  /**
+   * The placement as it was when the drag began.
+   *
+   * `mount` is part of it because the snap reports a *floor* mount for anything that
+   * is not a surface-host match — a wall snap seats the footprint against the wall
+   * but never claims a wall mount. Without the original to fall back on, nudging a
+   * wall-mounted TV along its own wall would drop it to the floor.
+   */
+  origin: { position: Vec2; rotation: number; mount: Mount };
   position: Vec2;
   rotation: number;
   mount: Mount;
@@ -343,6 +351,9 @@ export const useStore = create<StoreState>((set, get) => ({
       draft: null,
       transform: null,
       placementTransform: null,
+      // The notice describes what the last action did; undoing it leaves a sentence
+      // about something that no longer happened.
+      notice: null,
     });
   },
 
@@ -360,6 +371,7 @@ export const useStore = create<StoreState>((set, get) => ({
       selection: pruneSelection(next, selection),
       draft: null,
       transform: null,
+      notice: null,
     });
   },
 
@@ -454,10 +466,11 @@ export const useStore = create<StoreState>((set, get) => ({
       placementTransform: null,
       placingItemId: null,
       selection: [],
+      notice: null,
       tool: editMode === 'plan' ? get().tool : 'select',
     }),
 
-  setViewMode: (viewMode) => set({ viewMode }),
+  setViewMode: (viewMode) => set({ viewMode, notice: null }),
   setTool: (tool) =>
     set({ tool, draft: null, transform: null, placementTransform: null, measurement: null }),
   setShapeKind: (shapeKind) => set({ shapeKind, tool: 'shape', draft: null }),

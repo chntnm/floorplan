@@ -6,6 +6,9 @@ import {
   addPlacement,
   addRoomRect,
   addSavedView,
+  commitPlacementTransform,
+  placementSnapContext,
+  previewPlacementTransform,
   removeSavedView,
   setCeilingDrop,
   setPlacementMount,
@@ -13,6 +16,9 @@ import {
 import type { ItemDraft } from '../core/catalog';
 import { resolveElevation } from '../core/placement';
 import { spaceViews, type SpaceCamera } from '../core/views';
+import type { PlacementTransform } from './store';
+import type { Placement } from '../core/document';
+import type { Vec2 } from '../core/geometry/vec';
 
 const SHELF: ItemDraft = {
   name: 'Wall shelf',
@@ -236,5 +242,87 @@ describe('saved views', () => {
 
     expect(useStore.getState().walker).toBeNull();
     expect(useStore.getState().pendingCamera?.mode).toBe('orbit');
+  });
+});
+
+describe('dragging something that is mounted', () => {
+  /** Drag a placement to a new point, the way the stage does: preview, then commit. */
+  function dragTo(placement: Placement, to: Vec2) {
+    const ctx = placementSnapContext(placement.itemId, {
+      toleranceMm: 100,
+      excludePlacementId: placement.id,
+    });
+    const start: PlacementTransform = {
+      placementId: placement.id,
+      mode: 'move',
+      grab: placement.position,
+      origin: {
+        position: placement.position,
+        rotation: placement.rotation,
+        mount: placement.mount,
+      },
+      position: placement.position,
+      rotation: placement.rotation,
+      mount: placement.mount,
+      hints: [],
+    };
+    commitPlacementTransform(previewPlacementTransform(start, to, ctx));
+  }
+
+  it('keeps a wall-mounted item on its wall, and at its height', () => {
+    // The snap reports a *floor* mount for anything that is not a surface-host match
+    // — a wall snap seats the footprint against the wall but never claims a wall
+    // mount. Letting that through drops the TV to the ground on a 5mm nudge.
+    room();
+    const item = addCatalogItem(SHELF);
+    const placement = addPlacement(item.id, { x: 2500, y: 100 })!;
+    expect(placement.mount.kind).toBe('wall');
+
+    dragTo(placement, { x: 2700, y: 100 });
+
+    const moved = floor().placements[0]!;
+    expect(moved.mount).toEqual(placement.mount);
+    expect(moved.elevation).toBe(DEFAULT_WALL_MOUNT_MM);
+    expect(moved.position.x).not.toBe(placement.position.x);
+  });
+
+  it('keeps a hanging item hanging', () => {
+    room();
+    const item = addCatalogItem(PENDANT);
+    const placement = addPlacement(item.id, { x: 2500, y: 2000 })!;
+
+    dragTo(placement, { x: 1500, y: 2000 });
+    expect(floor().placements[0]!.mount).toEqual({ kind: 'ceiling', drop: 0 });
+  });
+
+  it('still drops a surface-mounted item to the floor when dragged off its host', () => {
+    // The other half of the rule: a surface mount that finds no host really has been
+    // taken off the thing it was standing on.
+    room();
+    const table = addCatalogItem({
+      name: 'Table',
+      category: 'table',
+      shape: 'rect',
+      widthMm: 1800,
+      depthMm: 900,
+      heightMm: 760,
+      voidBelowMm: 720,
+    });
+    const lamp = addCatalogItem({
+      name: 'Lamp',
+      category: 'lighting',
+      shape: 'circle',
+      widthMm: 300,
+      depthMm: 300,
+      heightMm: 500,
+      voidBelowMm: 0,
+    });
+    const host = addPlacement(table.id, { x: 2500, y: 2000 })!;
+    const child = addPlacement(lamp.id, { x: 2500, y: 2000 }, {
+      mount: { kind: 'surface', hostId: host.id },
+    })!;
+
+    dragTo(child, { x: 800, y: 3500 });
+    expect(floor().placements.find((p) => p.id === child.id)!.mount).toEqual({ kind: 'floor' });
   });
 });

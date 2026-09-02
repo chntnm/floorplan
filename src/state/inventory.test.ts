@@ -61,7 +61,11 @@ function transformFor(placementId: string, mode: 'move' | 'rotate' = 'move'): Pl
     placementId,
     mode,
     grab: placement.position,
-    origin: { position: placement.position, rotation: placement.rotation },
+    origin: {
+      position: placement.position,
+      rotation: placement.rotation,
+      mount: placement.mount,
+    },
     position: placement.position,
     rotation: placement.rotation,
     mount: placement.mount,

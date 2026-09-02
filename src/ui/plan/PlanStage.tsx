@@ -236,7 +236,11 @@ export function PlanStage() {
       placementId,
       mode,
       grab,
-      origin: { position: placement.position, rotation: placement.rotation },
+      origin: {
+        position: placement.position,
+        rotation: placement.rotation,
+        mount: placement.mount,
+      },
       position: placement.position,
       rotation: placement.rotation,
       mount: placement.mount,

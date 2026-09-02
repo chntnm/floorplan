@@ -618,6 +618,11 @@ sync.
 - **Floors and ceilings** — room boundary polygons triangulated and placed at the floor
   datum and at `ceilingHeightMm`. Ceilings hide when the camera is inside the room, or
   render single-sided so you can look in from above in orbit mode.
+  **Shipped as a global toggle, default off**, rather than as camera-aware hiding.
+  Deciding "is the camera inside this room" per frame per room is a point-in-polygon
+  test against a moving target, and getting it wrong flickers the ceiling on and off
+  as you cross a threshold. A switch is legible and always right; the cost is that
+  walk mode has no ceiling overhead until it is turned on.
 - **Placements** — extruded from the same `outline` polygon that the 2D view draws and
   the collision engine tests, raised to `elevation`, height `heightMm`. Circles and
   ellipses build true cylinders from their generator. One primitive, three consumers.

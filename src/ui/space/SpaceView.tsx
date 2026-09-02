@@ -2,6 +2,7 @@ import { Component, useRef, type ErrorInfo, type ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
 import { look } from '../../core/walk';
+import { placementsAreEditable, structureIsEditable } from '../../core/modes';
 import type { SpaceCamera } from '../../core/views';
 import { activeFloor, useStore, type SelectionRef } from '../../state/store';
 import { sceneFor } from './scene-cache';
@@ -57,9 +58,10 @@ class CanvasBoundary extends Component<{ children: ReactNode }, { failed: boolea
  * the renderer does not. The camera consumes the walker; it never owns it.
  */
 export function SpaceView() {
-  const { doc, cameraMode, selection, showCeilings } = useStore(
+  const { doc, editMode, cameraMode, selection, showCeilings } = useStore(
     useShallow((s) => ({
       doc: s.doc,
+      editMode: s.editMode,
       cameraMode: s.cameraMode,
       selection: s.selection,
       showCeilings: s.showCeilings,
@@ -115,6 +117,13 @@ export function SpaceView() {
     // A drag that happened to end on a mesh was a look, not a click. Without this,
     // turning around selects whatever you happened to finish facing.
     if (drag.current.moved > DRAG_THRESHOLD_PX) return;
+
+    // The layer toggle is a property of the document, not of the renderer: structure
+    // locked in the plan view is locked here too. Without this, clicking a wall in
+    // furnish mode selects it and the properties panel offers to delete it.
+    if (ref.kind === 'wall' && !structureIsEditable(editMode)) return;
+    if (ref.kind === 'placement' && !placementsAreEditable(editMode)) return;
+
     const store = useStore.getState();
     if (additive) store.toggleSelection(ref);
     else store.setSelection([ref]);
