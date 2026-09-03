@@ -37,6 +37,7 @@ import { findItem } from '../core/document';
 import { newId } from '../core/tools';
 import { commitRoomRect, commitShapeRoom, commitWallChain, type ShapeKind } from '../core/tools';
 import {
+  PlacementBlockedError,
   applyCalibration,
   assertAcceptsPlacements,
   clampOpacity,
@@ -170,10 +171,16 @@ export function addFloor(where: 'above' | 'below'): Id {
   const { doc } = useStore.getState();
   const floor = createStackedFloor(doc, where, newId());
 
+  // Written inside the recipe rather than through `setActiveFloor`: the inverse
+  // patch then restores both together, so undoing an added floor puts you back on
+  // the floor you were on instead of leaving `activeFloorId` naming one that has
+  // just been removed — which resolves through a fallback, looks fine, and saves a
+  // document whose active floor is not in it.
   useStore.getState().mutate(`Add floor ${where}`, (draft) => {
     draft.floors.push(floor);
+    draft.activeFloorId = floor.id;
   });
-  useStore.getState().setActiveFloor(floor.id);
+  useStore.getState().clearFloorScopedState();
   return floor.id;
 }
 
@@ -240,7 +247,10 @@ export function deleteFloor(floorId: Id): string | null {
     if (draft.activeFloorId === floorId) draft.activeFloorId = next.id;
   });
 
-  useStore.getState().setActiveFloor(next.id);
+  // Not `setActiveFloor`: the recipe above has already moved `activeFloorId`, so it
+  // would early-return and the route drawn on the floor that is now gone would
+  // survive, re-answering against the remaining floor's geometry.
+  useStore.getState().clearFloorScopedState();
   return null;
 }
 
@@ -260,19 +270,34 @@ export function deleteFloor(floorId: Id): string | null {
 export function movePlacementToFloor(placementId: Id, floorId: Id): string | null {
   const { doc } = useStore.getState();
   const from = doc.floors.find((f) => f.placements.some((p) => p.id === placementId));
-  if (!from || from.id === floorId) return null;
-  if (!doc.floors.some((f) => f.id === floorId)) return null;
+  const to = doc.floors.find((f) => f.id === floorId);
+  if (!from || !to || from.id === floorId) return null;
 
-  const moving = descendantsOf(from, placementId);
+  // The same gate `addPlacement` applies. A floor whose imported plan has not been
+  // calibrated has no scale, and moving furniture onto it produces exactly the state
+  // the gate exists to refuse — arrived at by a different door.
+  try {
+    assertAcceptsPlacements(to);
+  } catch (err) {
+    return err instanceof PlacementBlockedError ? err.message : null;
+  }
+
+  // Across every floor, not just the source: a cross-floor surface mount is already
+  // representable, and searching one floor would leave behind the very rider this is
+  // here to carry.
+  const moving = descendantsOf(doc.floors.flatMap((f) => f.placements), placementId);
   let reseated = 0;
 
   useStore.getState().mutate('Move to floor', (draft) => {
-    const source = draft.floors.find((f) => f.id === from.id);
     const target = draft.floors.find((f) => f.id === floorId);
-    if (!source || !target) return;
+    if (!target) return;
 
-    const travelling = source.placements.filter((p) => moving.has(p.id));
-    source.placements = source.placements.filter((p) => !moving.has(p.id));
+    const travelling: Placement[] = [];
+    for (const floor of draft.floors) {
+      if (floor.id === floorId) continue;
+      for (const p of floor.placements) if (moving.has(p.id)) travelling.push(p);
+      floor.placements = floor.placements.filter((p) => !moving.has(p.id));
+    }
 
     for (const placement of travelling) {
       const next = remountForFloor(placement, moving);

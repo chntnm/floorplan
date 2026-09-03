@@ -129,7 +129,7 @@ describe('moving between floors', () => {
       placement('lamp', { mount: { kind: 'surface', hostId: 'dresser' } }),
     ];
 
-    expect(descendantsOf(floor, 'dresser')).toEqual(new Set(['dresser', 'lamp', 'tray']));
+    expect(descendantsOf(floor.placements, 'dresser')).toEqual(new Set(['dresser', 'lamp', 'tray']));
   });
 
   it('does not carry something standing on a different item', () => {
@@ -140,7 +140,7 @@ describe('moving between floors', () => {
       placement('vase', { mount: { kind: 'surface', hostId: 'table' } }),
     ];
 
-    expect(descendantsOf(floor, 'dresser')).toEqual(new Set(['dresser']));
+    expect(descendantsOf(floor.placements, 'dresser')).toEqual(new Set(['dresser']));
   });
 
   it('re-seats a wall mount, because the wall is not over there', () => {

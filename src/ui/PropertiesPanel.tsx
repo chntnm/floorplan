@@ -777,12 +777,18 @@ export function PropertiesPanel() {
       <h2 className="panel__heading">Validation</h2>
       {issues.length === 0 ? (
         <p className="panel__empty" data-testid="no-issues">
-          No issues.
+          No issues{doc.floors.length > 1 ? ` on ${floor.name}` : ''}.
         </p>
       ) : (
         <>
           <p className="panel__count" data-testid="issue-summary">
             {issues.length === 1 ? '1 issue' : `${issues.length} issues`}
+            {/* Named rather than implied. Every check here — overlaps, headroom,
+                clearance, swing — runs against the active floor, which was a
+                distinction without a difference until there was more than one floor
+                and is now the difference between "no issues" and "none that I
+                looked for". */}
+            {doc.floors.length > 1 ? ` on ${floor.name}` : ''}
           </p>
           {/* One list, headed in place.
 

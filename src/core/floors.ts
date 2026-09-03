@@ -125,14 +125,19 @@ export function createStackedFloor(
  * upstairs when the dresser does — anything else strands a surface mount pointing at
  * a host on another floor, which `findPlacement` would happily resolve and every
  * elevation calculation would then answer against the wrong datum.
+ *
+ * Takes a placement list rather than a floor because the very thing it is guarding
+ * against is already representable: a cross-floor surface mount is in the model and can
+ * be in a file, and searching only the source floor would leave exactly the rider this
+ * function exists to carry.
  */
-export function descendantsOf(floor: Floor, placementId: Id): Set<Id> {
+export function descendantsOf(placements: readonly Placement[], placementId: Id): Set<Id> {
   const found = new Set<Id>([placementId]);
   // Repeat until nothing new appears: `placements` is in no particular order, so one
   // pass would miss a tray listed before the lamp it stands on.
   for (let grew = true; grew; ) {
     grew = false;
-    for (const p of floor.placements) {
+    for (const p of placements) {
       if (found.has(p.id)) continue;
       if (p.mount.kind === 'surface' && found.has(p.mount.hostId)) {
         found.add(p.id);

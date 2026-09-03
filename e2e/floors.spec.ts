@@ -206,3 +206,30 @@ test.describe('the space view', () => {
     await expect(page.getByTestId('floors-active')).toHaveAttribute('aria-pressed', 'false');
   });
 });
+
+test.describe('clicking through the stack in 3D', () => {
+  test('selects the wall on the floor you are editing, not the storey in front of it', async ({
+    page,
+  }) => {
+    // A solid on another floor must decline the click *before* stopping propagation.
+    // R3F calls every intersected mesh in distance order until one stops it, so a
+    // scenery solid that stopped first and declined second would eat the click on the
+    // wall behind it — and looking at a building with every floor shown, the top
+    // storey would swallow everything.
+    await drawRoom(page, { x: 6000, y: 5000 });
+    await page.getByTestId('add-floor-above').click();
+    // Directly over the ground floor, so an upstairs wall really is in the way.
+    await drawRoom(page, { x: 6000, y: 5000 });
+    await page.getByTestId('floor-picker').selectOption({ label: 'Ground' });
+
+    await page.getByRole('button', { name: 'Space', exact: true }).click();
+    await expect(page.getByTestId('space-view')).toBeVisible();
+    await page.getByTestId('floors-all').click();
+
+    const canvas = page.locator('.space__canvas canvas');
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    await expect(page.getByTestId('wall-properties')).toBeVisible();
+  });
+});

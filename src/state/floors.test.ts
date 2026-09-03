@@ -243,3 +243,87 @@ describe('floor properties', () => {
     expect(useStore.getState().doc.floors[0]!.name).toBe('Ground');
   });
 });
+
+describe('the defects a review pass found', () => {
+  it('clears a walkway route drawn on a floor that is then deleted', () => {
+    // `deleteFloor` moves `activeFloorId` inside its own recipe, which makes
+    // `setActiveFloor` a no-op afterwards — so folding the reset into the switch left
+    // the route alive, re-answering against the remaining floor's geometry.
+    const upstairs = addFloor('above');
+    useStore.getState().setWalkway([
+      { x: 0, y: 2000 },
+      { x: 5000, y: 2000 },
+    ]);
+
+    deleteFloor(upstairs);
+    expect(useStore.getState().walkway).toBeNull();
+  });
+
+  it('leaves the active floor resolvable after undoing the floor that was added', () => {
+    // `addFloor` used to switch *after* its own mutation, so the inverse patch removed
+    // the floor while `activeFloorId` still named it. `activeFloor` falls back, which
+    // hides it — but the picker matches no option and a save writes an id that is not
+    // in the document.
+    const ground = groundId();
+    addFloor('above');
+    useStore.getState().undo();
+
+    const { doc } = useStore.getState();
+    expect(doc.floors.some((f) => f.id === doc.activeFloorId)).toBe(true);
+    expect(doc.activeFloorId).toBe(ground);
+  });
+
+  it('refuses to move furniture onto a floor whose plan has no scale', () => {
+    // The same gate `addPlacement` applies, arrived at by a different door: a floor
+    // with an uncalibrated background has no trustworthy scale, and anything on it is
+    // placed at a size that means nothing.
+    const dresser = addCatalogItem(DRESSER);
+    const placed = addPlacement(dresser.id, { x: 2000, y: 2000 })!;
+    const ground = groundId();
+
+    const upstairs = addFloor('above');
+    useStore.getState().mutate('uncalibrated plan', (draft) => {
+      draft.floors.find((f) => f.id === upstairs)!.background = {
+        assetId: 'a',
+        pixelSize: { width: 1000, height: 800 },
+        transform: { position: { x: 0, y: 0 }, rotationDeg: 0 },
+        opacity: 1,
+        locked: false,
+      };
+    });
+
+    expect(movePlacementToFloor(placed.id, upstairs)).toContain('not been calibrated');
+    expect(
+      useStore.getState().doc.floors.find((f) => f.id === ground)!.placements,
+    ).toHaveLength(1);
+  });
+
+  it('carries a rider that was already sitting on another floor', () => {
+    // A cross-floor surface mount is representable and can be in a file. Walking only
+    // the source floor leaves behind the very rider the walk exists to carry.
+    const dresser = addCatalogItem(DRESSER);
+    const host = addPlacement(dresser.id, { x: 2000, y: 2000 })!;
+
+    const upstairs = addFloor('above');
+    addRoomRect({ x: 0, y: 0 }, { x: 5000, y: 4000 });
+    const lamp = addCatalogItem(LAMP);
+    const rider = addPlacement(lamp.id, { x: 2000, y: 2000 })!;
+    useStore.getState().mutate('cross-floor mount', (draft) => {
+      const p = draft.floors
+        .find((f) => f.id === upstairs)!
+        .placements.find((x) => x.id === rider.id)!;
+      p.mount = { kind: 'surface', hostId: host.id };
+    });
+
+    const attic = addFloor('above');
+    movePlacementToFloor(host.id, attic);
+
+    const top = useStore.getState().doc.floors.find((f) => f.id === attic)!;
+    expect(top.placements.map((p) => p.id).sort()).toEqual([host.id, rider.id].sort());
+    // And it is still on the dresser, because the dresser came with it.
+    expect(top.placements.find((p) => p.id === rider.id)!.mount).toEqual({
+      kind: 'surface',
+      hostId: host.id,
+    });
+  });
+});

@@ -275,6 +275,7 @@ export type StoreState = {
   setShowCeilings: (on: boolean) => void;
   setFloorVisibility: (visibility: FloorVisibility) => void;
   setActiveFloor: (floorId: Id) => void;
+  clearFloorScopedState: () => void;
   setPendingCamera: (camera: SpaceCamera | null) => void;
   setNotice: (notice: string | null) => void;
   applySavedView: (view: SavedView) => void;
@@ -553,11 +554,11 @@ export const useStore = create<StoreState>((set, get) => ({
   /**
    * Change which floor everything is addressing.
    *
-   * Silent, so undo walks back edits rather than storeys. Everything that names
-   * something on the old floor goes with it: a selection, a half-drawn wall chain, a
-   * drag in progress, a walkway route measured through rooms you are no longer
-   * looking at. `pruneSelection` alone would not do it — it drops what no longer
-   * exists, and a wall on the floor below still exists perfectly well.
+   * Silent, so undo walks back edits rather than storeys. A *bare* switch is not an
+   * edit; a switch that rides along with one — adding a floor, deleting the one you
+   * are standing on — is written inside that edit's own recipe instead, so undoing it
+   * puts you back where you were rather than leaving `activeFloorId` naming a floor
+   * the inverse patch has just removed.
    */
   setActiveFloor: (floorId) => {
     const { doc } = get();
@@ -571,6 +572,24 @@ export const useStore = create<StoreState>((set, get) => ({
       },
       { silent: true },
     );
+    get().clearFloorScopedState();
+  },
+
+  /**
+   * Drop everything in the editor that names something on a particular floor.
+   *
+   * A selection, a half-drawn wall chain, a drag in progress, a walkway route measured
+   * through rooms you are no longer looking at. `pruneSelection` alone would not do
+   * it — it drops what no longer *exists*, and a wall on the floor below still exists
+   * perfectly well; nothing prunes the route at all.
+   *
+   * Separate from `setActiveFloor` because the actions that change floors as part of a
+   * document edit write `activeFloorId` inside their own recipe, which makes
+   * `setActiveFloor` a no-op by the time they could call it. Deleting a floor is every
+   * one of those, so folding this into the switch left the route from the deleted
+   * floor alive and re-answering against geometry that had nothing to do with it.
+   */
+  clearFloorScopedState: () =>
     set({
       selection: [],
       draft: null,
@@ -581,8 +600,7 @@ export const useStore = create<StoreState>((set, get) => ({
       walker: null,
       cursor: null,
       snapHints: [],
-    });
-  },
+    }),
   setPendingCamera: (pendingCamera) => set({ pendingCamera }),
   setNotice: (notice) => set({ notice }),
 

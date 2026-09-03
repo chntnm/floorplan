@@ -76,13 +76,19 @@ export function SpaceScene({ scene, activeFloorId, selection, showCeilings, onSe
           geometry={geometry}
           rotation={UPRIGHT}
           onClick={(e) => {
-            // Only the nearest hit: without this a click passes through a wall and
-            // selects everything behind it as well.
-            e.stopPropagation();
             // A solid on another floor is scenery. Selecting it would put something
             // in the panel that the plan view — which edits one floor — cannot show,
             // and that the delete key would then remove from a storey you are not on.
+            //
+            // Checked **before** stopping propagation, and the order is the whole
+            // point: R3F calls every intersected mesh in distance order until one
+            // stops it, so a scenery solid that stopped first and declined second
+            // would eat the click on the wall behind it. Looking down at a building
+            // with every floor shown, the top storey would swallow everything.
             if (solid.floorId !== activeFloorId) return;
+            // Only the nearest hit: without this a click passes through a wall and
+            // selects everything behind it as well.
+            e.stopPropagation();
             onSelect({ kind: solid.ref.kind, id: solid.ref.id }, e.nativeEvent.shiftKey);
           }}
         >
