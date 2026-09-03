@@ -61,6 +61,52 @@ describe('which addresses are private', () => {
       expect(isPrivateAddress(address), address).toBe(false);
     }
   });
+
+  it('sees through the other spellings of a mapped IPv4 loopback', () => {
+    // `::ffff:127.0.0.1` and `::ffff:7f00:1` are the same address, the second written
+    // in hex. A check that looks for a dotted quad only recognises the first, which is
+    // exactly the spelling an attacker does not use.
+    for (const address of [
+      '::ffff:127.0.0.1',
+      '::ffff:7f00:1',
+      '[::ffff:7f00:1]',
+      '::ffff:a00:1', // 10.0.0.1
+      '0:0:0:0:0:ffff:7f00:0001',
+    ]) {
+      expect(isPrivateAddress(address), address).toBe(true);
+    }
+  });
+
+  it('does not refuse everything that merely looks v6', () => {
+    // `::ffff:5db8:d822` is a mapped 93.184.216.34 — a public address, and blocking it
+    // would refuse a real retailer. `fe00::1` is one bit outside fe80::/10, which is
+    // the kind of edge a prefix-string check gets wrong in the permissive direction.
+    for (const address of ['::ffff:5db8:d822', '2001:db8::1', 'fe00::1', 'not-an-address']) {
+      expect(isPrivateAddress(address), address).toBe(false);
+    }
+  });
+});
+
+describe('the spellings of an address', () => {
+  it('refuses a loopback written as a number', () => {
+    // `https://2130706433/` is 127.0.0.1 in decimal, and `0x7f.0.0.1` in hex. The
+    // WHATWG URL parser normalises both to a dotted quad before this code sees them —
+    // load-bearing and not obvious, so it is asserted rather than assumed. Without it
+    // the literal guard would have a hole that only the DNS step covers, and that step
+    // is skipped on a runtime with no resolver.
+    for (const url of [
+      'https://2130706433/p',
+      'https://0x7f.0.0.1/p',
+      'https://017700000001/p',
+      'https://127.1/p',
+    ]) {
+      expect(() => parseTargetUrl(url), url).toThrow(BlockedUrlError);
+    }
+  });
+
+  it('refuses a mapped loopback in a URL', () => {
+    expect(() => parseTargetUrl('https://[::ffff:7f00:1]/p')).toThrow(BlockedUrlError);
+  });
 });
 
 describe('which URLs are even considered', () => {

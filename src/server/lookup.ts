@@ -72,14 +72,71 @@ function isPrivateIPv4(host: string): boolean {
   return false;
 }
 
+/**
+ * An IPv6 literal as its eight 16-bit groups, or null if it is not one.
+ *
+ * Expanded rather than matched by prefix, because the same address has many
+ * spellings and a string test only recognises the ones you thought of.
+ * `::ffff:127.0.0.1` and `::ffff:7f00:1` are the *same address* — the second written
+ * in hex — and a regex looking for dotted quads sees only the first.
+ */
+function parseIPv6(raw: string): number[] | null {
+  let h = raw.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!h.includes(':')) return null;
+
+  // A trailing dotted quad (`::ffff:127.0.0.1`) becomes two hex groups, so
+  // everything below works on one representation.
+  const tail = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(h);
+  if (tail) {
+    const octets = tail[2]!.split('.').map(Number);
+    if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    const [a = 0, b = 0, c = 0, d = 0] = octets;
+    h = `${tail[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+
+  const halves = h.split('::');
+  if (halves.length > 2) return null;
+
+  const toGroups = (part: string): number[] | null => {
+    if (part === '') return [];
+    const out: number[] = [];
+    for (const piece of part.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(piece)) return null;
+      out.push(parseInt(piece, 16));
+    }
+    return out;
+  };
+
+  const head = toGroups(halves[0] ?? '');
+  const rest = halves.length === 2 ? toGroups(halves[1] ?? '') : null;
+  if (!head) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  if (!rest) return null;
+
+  const gap = 8 - head.length - rest.length;
+  if (gap < 1) return null;
+  return [...head, ...new Array<number>(gap).fill(0), ...rest];
+}
+
 function isPrivateIPv6(host: string): boolean {
-  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
-  if (h === '::1' || h === '::') return true;
-  if (h.startsWith('fe80')) return true; // link-local
-  if (/^f[cd]/.test(h)) return true; // unique-local
-  // `::ffff:127.0.0.1` — an IPv4 address wearing an IPv6 hat.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h);
-  return mapped ? isPrivateIPv4(mapped[1]!) : false;
+  const g = parseIPv6(host);
+  if (!g) return false;
+
+  // `::` (unspecified) and `::1` (loopback).
+  if (g.slice(0, 7).every((n) => n === 0) && (g[7] === 0 || g[7] === 1)) return true;
+  // Link-local fe80::/10 and unique-local fc00::/7.
+  if ((g[0]! & 0xffc0) === 0xfe80) return true;
+  if ((g[0]! & 0xfe00) === 0xfc00) return true;
+
+  // IPv4-mapped ::ffff:0:0/96 — an IPv4 address wearing an IPv6 hat, and the way a
+  // loopback gets past a check that only knows what a dotted quad looks like.
+  if (g.slice(0, 5).every((n) => n === 0) && g[5] === 0xffff) {
+    const hi = g[6]!;
+    const lo = g[7]!;
+    return isPrivateIPv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+
+  return false;
 }
 
 export function isPrivateAddress(host: string): boolean {

@@ -605,6 +605,15 @@ rather than papered over: between the DNS check and the connection a record can 
 and closing that needs the socket pinned to the address that was checked, which `fetch`
 does not expose.
 
+Addresses are **expanded, not prefix-matched**. `::ffff:127.0.0.1` and `::ffff:7f00:1`
+are the same address written two ways, and a check looking for a dotted quad sees only
+the first — which is not the spelling anyone testing the claim would use. The numeric
+IPv4 forms (`https://2130706433/`, `0x7f.0.0.1`) are handled a layer down: the WHATWG
+URL parser normalises them to a dotted quad before this code sees the hostname. That is
+load-bearing and not obvious, so it is asserted rather than assumed — without it the
+literal guard would have a hole covered only by the DNS step, which a runtime with no
+resolver skips.
+
 ---
 
 ## 8. Editing: Modes and Layers
