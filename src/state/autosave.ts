@@ -67,9 +67,13 @@ async function write(): Promise<void> {
 }
 
 function schedule(): void {
-  if (timer !== null) return;
-  const delay = autosaveDelay(Date.now(), lastWriteAt);
-  timer = setTimeout(() => void write(), delay);
+  // Re-armed on every change, not left standing from the first one. Leaving it alone
+  // while a timer is pending turns the whole thing into a two-second throttle: the
+  // deadline term in `autosaveDelay` only ever binds when the debounce is actually
+  // reset, so nothing would ever wait longer than the quiet period and the twenty
+  // seconds would be decoration.
+  cancel();
+  timer = setTimeout(() => void write(), autosaveDelay(Date.now(), lastWriteAt));
 }
 
 /**
