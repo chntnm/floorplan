@@ -24,3 +24,6 @@ Thumbs.db
 # The frozen schema-1 container. Checked in on purpose: a migration fixture that
 # is regenerated from current code proves nothing.
 !src/core/fixtures/**/*.space
+
+# Capture intermediates — full-size stills and GIF frames.
+media/.work/

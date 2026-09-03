@@ -1,25 +1,65 @@
 # floorplan
 
-Spatial planning for real rooms. Import a floor plan, build an inventory of what you
-own, place it, and walk through the result in 3D.
+Spatial planning for real rooms. Bring a floor plan — a PDF, an image, or nothing at
+all — trace it, build an inventory of the things you own, place them, and walk through
+the result in 3D. Phases 0–9 of [PLAN.md](./PLAN.md) are built: import and calibration,
+the plan editor, inventory and placement, the space view, door swing, clearance and
+circulation, room detection and floor stacking, save-in-place and crash recovery.
 
-The document is fully three-dimensional. Every object carries a real height and a base
-elevation, so a rug under a table is not a collision, a wall shelf at 1400mm does not
-block a desk at 750mm, and a 2100mm bookcase under a 2050mm soffit is a violation the
-app catches.
+**One decision explains most of the rest of it.** Every object carries a real height and
+a real base elevation, and the geometry is three-dimensional everywhere rather than a
+plan with a height column bolted on. A rug under a coffee table is not a collision. A
+wall shelf at 1400mm does not block a desk at 750mm. A 2100mm bookcase under a 2050mm
+soffit is a violation the app catches. You walk *over* the rug, *under* the doorway's
+lintel and *into* the dresser, with no special case for any of them — the walker is a
+vertical interval tested against other vertical intervals, and a doorway is passable
+because the only solid above it starts at 2032mm.
 
-> **Status: phase 5.** The whole loop works end to end: import a PDF or image and
-> calibrate it, trace walls and rooms, cut doors and windows, build an inventory,
-> place it with wall and surface snapping, then switch to the space view and walk
-> through the result with the arrow keys. Door swing (phase 6), clearance zones
-> (phase 7) and multi-floor (phase 8) are not built yet. See [PLAN.md](./PLAN.md).
+Everything below follows from that, and from one more thing: the plan view is where you
+build and the space view is where you find out. Neither is the real one. Both read and
+write the same document.
 
-## Walking around
+| View | For | Renderer |
+|------|-----|----------|
+| **Plan**, 2D top-down | authoring — tracing, dimensioning, placing, measuring | Konva |
+| **Space**, 3D | verification — sightlines, headroom, how it actually feels | three.js |
 
-Press **Space** in the view switcher, then **Tab** to cycle orbit → walk → fly.
+---
+
+## The plan view
+
+![The plan editor: a two-room flat traced over, furnished, with the validation panel on the right](docs/media/plan.png)
+
+Draw walls and let detection find the rooms, or trace rooms directly. Cut doors and
+windows into walls by clicking the wall. Everything is integer millimetres; the display
+unit is a view preference and never touches a calculation.
+
+Tools are `V` select, `W` wall, `R` room, `O` opening, `S` shape, `D` dimension,
+`P` walkway probe. `G` toggles the grid, `Alt` suppresses snapping while held, `[` and
+`]` rotate the selection in 15° steps, `Enter` finishes a wall chain, `Ctrl+Z` undoes.
+One drawn wall is one undo, not the several hundred mouse-move events that drew it.
+
+## The same document in 3D
+
+![The space view: the flat extruded, seen in orbit mode](docs/media/space.png)
+
+The 3D view is derived, never authored. Openings are cut in *elevation*, not in plan, so
+a wall with a door in it is not a wall with a hole — it is the four solid boxes that
+remain around the opening: flank, sill wall, lintel, flank. The same list of boxes is
+handed to the renderer, to the walker and to the validation panel, which is what stops
+the drawing and the collision test disagreeing about where the doorway is.
+
+## Walking through it
+
+![Walking from the living room through the interior doorway into the bedroom](docs/media/walk.gif)
+
+Click **Space** in the top bar, then **Walk** in the view HUD, or press `Tab` to cycle
+orbit → walk → fly. The readout names the room you are standing in and what you are
+standing on — in that clip, a 10mm rug.
 
 | Key | Does |
 |-----|------|
+| `Tab` | cycle orbit → walk → fly |
 | `↑` `↓` / `W` `S` | walk forward and back |
 | `←` `→` / `Q` `E` | turn |
 | `A` `D` | strafe |
@@ -29,8 +69,58 @@ Press **Space** in the view switcher, then **Tab** to cycle orbit → walk → f
 | `R` `F` | rise and fall, in fly mode |
 | drag | look around |
 
-Collision is genuinely three-dimensional: you walk *over* a rug, *under* a doorway's
-lintel, and *into* a dresser, with no special case for any of them.
+The walk simulation deliberately lives *outside* three.js: a plain `requestAnimationFrame`
+loop over pure functions, so the camera consumes the walker rather than owning it. The
+position readout survives a browser with no WebGL, and traversal is testable without a
+GPU.
+
+## Getting a plan in
+
+![The calibration gate over a freshly imported plan, with everything else disabled](docs/media/calibrate.png)
+
+Import a PDF or an image and the app blocks until you tell it the scale: drag a line
+across something whose real length you know, then type that length. Nothing downstream
+can correct a plan with no scale, so nothing downstream is offered — the tools grey out,
+and `addPlacement` throws rather than accepting an item into a document that cannot say
+how big it is.
+
+An uncalibrated background is shown at a nominal 6m width, so the reference line is
+drawable before a real scale exists. Calibrating rescales about the point you anchored
+on, so that point does not move. Import does not re-fit the viewport, on purpose.
+
+## Inventory
+
+Enter items by hand, or start from the preset library — real published sizes, a US queen
+mattress at 1524 × 2032mm because it is 60" × 80". Every field parses any unit: `1.8m`,
+`30"`, `2' 6"`, or a bare number in the document's display unit, echoed back so you can
+see what it understood.
+
+![The confirmation dialog for a product URL, showing the text the dimensions were read from](docs/media/lookup.png)
+
+A product URL can be looked up instead, and the answer is never taken on trust. The
+parser refuses a unitless number. What was scraped is shown next to the fields it filled,
+along with the text it came from, and nothing enters the inventory until you press Add.
+The lookup endpoint runs server-side only; with it absent the app is fully functional and
+says so, which is the behaviour a static deployment gets.
+
+## What has to stay clear
+
+![A dresser selected, its drawer-pull clearance hatched, and the bookcase standing in it](docs/media/clearance.png)
+
+Two checks that sound alike and are not. A **clearance zone** asks whether a drawer opens
+— 900mm in front of a dresser, 1067mm behind a dining chair, 1200mm at an appliance door.
+A **walkway probe** asks whether a person fits. They differ on whether walls count: they
+do not for a zone, they do for the probe.
+
+Zones are drawn on the selected item only. A warning that says "the bookcase blocks the
+drawer pull" is an argument, and the hatched rectangle is the evidence — but six dining
+chairs with pull-out zones would carpet the floor in hatching and say nothing. The probe
+stores the *route*, not the number, so it re-answers as furniture moves.
+
+The validation panel groups by what you would do about a problem rather than by which
+enum the issue came from.
+
+---
 
 ## Quick start
 
@@ -39,18 +129,18 @@ pnpm install
 pnpm dev            # http://localhost:5190
 ```
 
-## Scripts
-
 | Script | Does |
 |--------|------|
-| `pnpm dev` | Vite dev server |
+| `pnpm dev` | Vite dev server, with the product-lookup endpoint |
 | `pnpm build` | Typecheck, then production build |
+| `pnpm preview` | Serve the production build — no lookup endpoint, like a static deploy |
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm lint` | ESLint |
-| `pnpm test` | Vitest unit tests |
+| `pnpm test` | Vitest — 765 unit tests |
 | `pnpm test:watch` | Vitest in watch mode |
-| `pnpm e2e` | Playwright against a production build |
+| `pnpm e2e` | Playwright — 124 end-to-end tests, against a production build |
 | `pnpm e2e:install` | One-time Playwright browser install |
+| `pnpm media` | Redraw every picture in this README (needs `ffmpeg`) |
 
 ## Layout
 
@@ -58,28 +148,74 @@ pnpm dev            # http://localhost:5190
 src/
 ├── core/          pure logic — units, geometry, document model, tools, validation
 ├── state/         zustand store: document slice (undoable) + editor slice (not)
+├── server/        the product-lookup endpoint
 ├── ui/            React shell, panels, dialogs
-│   └── plan/      Konva stage and its layers
+│   ├── plan/      Konva stage and its layers
+│   └── space/     three.js scene, camera rig, walk loop
 └── styles/        global CSS
 e2e/               Playwright specs
-PLAN.md            architecture + phasing
+media/             the capture script behind docs/media
+PLAN.md            architecture, decisions, and the phasing table
 ```
 
-`src/core/` is deliberately free of React and of any renderer. The geometry engine is
-pure functions over integer millimeters, consumed identically by the Konva plan view,
-the three.js space view, and the validation passes — which is what keeps one geometry
-primitive serving all three.
+`src/core/` is free of React and of any renderer. The geometry engine is pure functions
+over integer millimetres, consumed identically by the Konva plan view, the three.js space
+view and the validation passes — which is what keeps one geometry primitive serving all
+three.
 
 ## Conventions
 
-- **Integer millimeters** are the canonical unit everywhere in `src/core/`. Display
-  units are a view preference and never used for computation.
+- **Integer millimetres** everywhere in `src/core/`. Display units are a view preference
+  and never used for computation.
 - The document is Z-up (`x` east, `y` south, `z` up). three.js is Y-up. The conversion
   lives in exactly one place and is tested both directions.
 - Rotation is never baked into stored vertices. Footprints stay in local coordinates;
   world geometry is derived per query.
-- **Document state is undoable; editor state is not.** A drag lives entirely in the
-  editor slice and writes to the document once, on release, so one drawn wall is one
-  press of Ctrl+Z rather than several hundred.
-- Coordinates round to integer millimetres at the commit boundary, never during a
-  drag — rounding mid-gesture makes geometry jitter against the cursor.
+- **Document state is undoable; editor state is not.** A drag lives entirely in the editor
+  slice and writes to the document once, on release.
+- Coordinates round to integer millimetres at the commit boundary, never during a drag —
+  rounding mid-gesture makes geometry jitter against the cursor.
+
+---
+
+## What is not built, and what is not measured
+
+Read this before believing anything above is finished.
+
+**Not built, and not planned for v1.** Dragging a room boundary directly: rooms and their
+walls are separate entities and moving one without the other desynchronises them, so the
+gesture that does not exist is the one that would break. Move the walls and press Detect
+rooms instead. Windows do not open — a casement sash would swing like a door and is not
+implemented. Floors can only be added at the ends of the stack. A detected room is a
+simple ring, so an island of walls inside one does not punch a hole in it. PDF vector path
+extraction is v2: a PDF is rasterised and traced by hand.
+
+**Built, and known to be approximate.** The walkway probe reports the narrowest gap *at a
+sample*, not the true infimum — the medial-axis navmesh that would give the real answer is
+explicitly out of scope. Collision is resolved by retrying a move per axis rather than
+against a contact normal, so a walker slides stickily along a diagonal wall. The product
+lookup's confidence flag records whether any dimension was accepted exactly as scraped; it
+records nothing about whether the page was right. DNS rebinding between the endpoint's
+address check and its connect is open, because `fetch` will not pin a socket.
+
+**Not measured.** There are no performance numbers here, because none have been taken.
+PLAN.md §10.4 sets a target of 500 objects at 60fps; the space view currently builds one
+mesh per solid with no instancing, and nobody has run that test. The pictures on this page
+are captured in headless Chromium on a software rasteriser, so they demonstrate what the
+app draws and say nothing at all about how fast it draws it.
+
+**Synthetic.** The product-page fixtures the lookup parser is tested against are written
+by hand, not captured from real retailers, and the sample plan in the calibration
+screenshot is drawn by the capture script. Neither has been run against a real shop or a
+real estate agent's PDF.
+
+## The pictures
+
+Every image above is generated by driving the real application — `media/capture.spec.ts`,
+run with `pnpm media`, which builds the scene through the same screen-to-document mapping
+the end-to-end suite uses, photographs it, and encodes the clip with ffmpeg. Each capture
+asserts the state it is photographing: the walk clip fails if the walker does not reach
+the bedroom, the clearance shot fails if the issue is not listed.
+
+That is the whole reason it exists. A hand-taken screenshot of a feature that has since
+changed is a lie the repository tells silently, and it tells it for years.

@@ -26,5 +26,13 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts", "eslint.config.js"]
+  "include": [
+    "src",
+    "e2e",
+    "media",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "playwright.media.config.ts",
+    "eslint.config.js"
+  ]
 }
