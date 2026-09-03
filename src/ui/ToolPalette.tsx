@@ -7,6 +7,7 @@ import {
   PLAN_TOOL_LABELS,
   SHAPE_KINDS,
   SHAPE_KIND_LABELS,
+  type PlanTool,
 } from '../core/tools';
 import { useStore } from '../state/store';
 
@@ -34,6 +35,16 @@ export function ToolPalette() {
   // correct them afterwards. See PLAN.md §6.1.
   const enabled = structureIsEditable(editMode) && !calibrating;
 
+  /**
+   * Tools that stay available while structure is locked.
+   *
+   * Select, and the walkway probe — which edits nothing at all, and whose whole
+   * purpose is to be running while you push furniture around. Disabling it in
+   * furnish mode would mean the one question it answers ("can I still get past?")
+   * could only be asked in the mode where you cannot move anything.
+   */
+  const alwaysAvailable = (t: PlanTool) => t === 'select' || t === 'walkway';
+
   return (
     <div className="palette">
       <div className="palette__row" role="group" aria-label="Plan tools">
@@ -44,7 +55,7 @@ export function ToolPalette() {
             className="seg"
             data-active={t === tool}
             aria-pressed={t === tool}
-            disabled={!enabled && (calibrating || t !== 'select')}
+            disabled={!enabled && (calibrating || !alwaysAvailable(t))}
             title={`${PLAN_TOOL_LABELS[t]} (${PLAN_TOOL_KEYS[t].toUpperCase()})`}
             onClick={() => useStore.getState().setTool(t)}
           >

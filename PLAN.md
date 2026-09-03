@@ -608,10 +608,54 @@ vertical extent is a violation, listed with its reason. Presets ship with the st
 library: 900mm in front of dressers, 1067mm behind dining chairs, 1200mm at appliance
 doors.
 
+Three things fell out of building it that are worth stating.
+
+**Walls are not obstructions for a zone.** Wall snap seats an item's back edge *on*
+the wall face, so a `back` zone tested against walls fires on every chair pushed
+against one — the default outcome of using the snap, not a corner case. This is the
+same rule phase 6 settled for door swings. The question "is there room to get past
+this" is a different question, and the walkway probe below is what answers it, with
+walls very much included. Two checks, deliberately.
+
+**The step-over threshold belongs to the intruder, not to the zone.** A rug in front
+of a dresser is not a blocked drawer. The fix is *not* to lift the zone's floor —
+that exempts a band of space and hides a 90mm shoe rack sitting in it. What makes the
+rug irrelevant is that you step over it, so the zone runs from the floor and anything
+whose solid top is below `CLEARANCE_STEP_OVER_MM` is skipped: the same shape of rule
+as `voidBelowMm` and the walker's `STEP_OVER_MM`.
+
+**A zone is a rectangle off the local bounding box.** "Attached to a footprint edge"
+is the spec, and a bounding-box edge is the only edge a circular table has. It goes
+through `toWorld` — the transform the outline itself uses — so rotation and flipping
+come out right by construction rather than by two formulas agreeing.
+
 **Walkway width probe.** The user draws a path polyline through the space; the app
-reports the narrowest gap along it, measured at a configurable height (default 900mm —
-hip height, where you actually squeeze past furniture, not floor level where a sofa base
-is narrower than its arms). Flags anything below the threshold (default 762mm / 30").
+reports the narrowest gap along it. Flags anything below the threshold (762mm / 30").
+
+**Measured against a body, not at a height.** This spec originally said 900mm — "hip
+height, where you actually squeeze past furniture, not floor level where a sofa base
+is narrower than its arms". The floor half of that is right and the fix is not: **a
+standard sofa back is 840mm**, so a ray at 900 passes straight over this section's own
+example and reports a clear walkway through the middle of the couch. A dining table at
+760 and a dresser at 810 go the same way, and any single height is either low enough
+to catch table legs or high enough to miss the furniture. So the probe asks what
+traversal already asks — is anything solid inside `[STEP_OVER_MM, STAND_HEIGHT_MM]`,
+imported from `walk.ts` rather than restated, so there is one definition of what a
+body takes up. The walker's answer about a doorway and the plan's answer about a gap
+can then never disagree.
+
+**The route is editor state, not document state.** It is a question asked of the
+plan, like a measurement, not a part of it — nobody else opening the file drew it.
+Storing the *path* rather than the answer is what makes it worth having: move the
+sofa 100mm and the number moves with it. It survives a tool change, unlike a
+measurement, and the tool stays available in furnish mode, because "can I still get
+past?" is a question you ask while pushing furniture around.
+
+**What the sampling can miss.** The path is sampled at its vertices and every 100mm
+between them, and each sample casts one ray to each side. The answer is the narrowest
+gap *at a sample*, not the true infimum: a table leg between two samples is stepped
+over, and a diagonal pinch is measured square to the path. Vertices are always
+sampled because a path turns where a room pinches. Stated rather than implied.
 
 Full medial-axis navmesh analysis of the free space is explicitly out of scope. The
 probe answers the real question — "can I get from the door to the couch?" — at a
@@ -748,7 +792,7 @@ isolated so neither blocks the core editor.
 | **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap, surface snap, rotation, and 3D overlap warnings. **First genuinely useful build.** Wall snap seats the footprint's *back edge* (local −y) on the wall's near face and rotates to match, never the centre on the centreline. The calibration gate stops being decorative here: `addPlacement` throws `PlacementBlockedError` carrying the same sentence the validation panel shows, and the Place button is disabled rather than offered-and-refused. Deleting a placement re-seats anything surface-mounted on it, so the document never references a host that is gone. Headroom arrives early — `exceedsHeadroom` already existed — but clearance zones (7) and door swing (6) are still out. |
 | **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. An opening cuts a wall in *elevation*, not in plan, so `ExtrudeGeometry` holes were never the answer: `wallSegments` **splits** the wall into the solid boxes that remain — flank, sill wall, lintel, flank — which needs no CSG and hands the same list to the renderer, the walker and the validation panel. A doorway is passable because the only solid above it starts at 2032mm, with no "is this a door" check anywhere in traversal. The walk simulation deliberately lives *outside* three.js: a plain rAF loop over pure functions, so the camera consumes the walker rather than owning it, the position readout survives a browser with no WebGL, and traversal is testable without a GPU. Deferred and stated rather than claimed: **instancing** (§10.4's 500-at-60fps target is unmeasured — one mesh per solid today), and a real contact-normal collision resolver (moves are retried per axis, so diagonal walls slide stickily). |
 | **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. The five kinds behave in four different ways, and the difference is the reason the kinds exist: hinged doors need their swept sector clear, sliders need the wall they park over clear, pocket doors need **nothing** in the room clear and instead need a cavity that can exist, and cased openings and windows need nothing at all. The swept sector is computed once and serves three consumers — its boundary *is* the 2D door symbol (closed leaf, arc, open leaf), it is the clearance polygon, and it positions the 3D panel — so the drawing and the check cannot disagree about where the door goes. Hanging the leaf is done with **flip buttons, not selects**, because there is no honest label for the two sides of a wall; the arc in the drawing is what makes the choice legible. The angle field holds its text locally and commits on blur or Enter, like the room name and every length field: writing per keystroke to a value that is *clamped* means the `1` of `135` is stored as `15` and the rest of the number is typed against that, so no angle whose first digit falls below the floor can be entered at all. `fill()` in a test never sees it, because it delivers the whole value in one change event. Deferred and stated rather than claimed: **windows do not open** (a casement sash would swing like a door and is not built), and the 3D layer-toggle gate on a door leaf is covered by an exhaustive unit test over `refIsEditable` rather than end to end — in the orbit view a leaf is a slab a few pixels wide seen edge-on, and walk mode does not take selection clicks at all, so hunting for it with a grid of clicks would test where the camera happens to sit. |
-| **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. |
+| **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. Two checks that sound alike and are not: a zone asks whether a drawer opens, the probe asks whether a person fits, and they differ on whether walls count (see §9.3 — they do not for a zone, they do for the probe). Zones are drawn on the selected item only, for the reason the swing arc is drawn: a warning that says "the bookcase blocks the drawer pull" is an argument and the hatched rectangle is the evidence — but six dining chairs with pull-out zones would carpet the floor in hatching and say nothing. The probe stores the *route*, not the number, so it re-answers as furniture moves; the tool stays live in furnish mode for the same reason. The panel groups by what you would do about a problem rather than by the issue enum, keeping `validateFloor`'s blocking-first order rather than forming a second opinion about severity in the component least qualified to have one. Deferred and stated rather than claimed: **the 900mm probe height in §9.3 was wrong and is now a body interval** — a sofa back is 840mm, so the specified ray passed over the one piece of furniture the spec named; and the full medial-axis navmesh remains explicitly out of scope, so the probe reports the narrowest gap *at a sample*, not the true infimum. |
 | **8** | **Multi-room and multi-floor** — room detection and areas, per-room ceiling heights, floor stacking, ghost underlay, 3D floor toggles. |
 | **9** | **Polish and portability** — File System Access save-in-place, IndexedDB autosave and recovery, thumbnails, product URL lookup endpoint + confirm dialog, export/import e2e, migration tests. |
 

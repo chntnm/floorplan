@@ -343,3 +343,49 @@ describe('what a leaf needs kept clear', () => {
     expect(validateFloor(d, floor).map((i) => i.kind)).toContain('pocket-blocked');
   });
 });
+
+describe('clearance zones', () => {
+  const DRAWER = { edge: 'front' as const, depthMm: 900, reason: 'drawer pull' };
+
+  function withZoned() {
+    const d = withItems(['dresser', 'bookcase', 'rug']);
+    d.catalog[0]!.clearances = [DRAWER];
+    return d;
+  }
+
+  it('reports what is standing in front of the drawers', () => {
+    const d = withZoned();
+    d.floors[0]!.placements = [
+      place('dresser', { x: 0, y: 0 }, 'dresser'),
+      place('bookcase', { x: 0, y: 600 }, 'bookcase'),
+    ];
+
+    const issue = validateFloor(d, d.floors[0]!).find((i) => i.kind === 'clearance')!;
+    expect(issue.message).toBe('Bookcase blocks the drawer pull clearance in front of Dresser.');
+    expect(issue.refs.map((r) => r.id)).toEqual(['dresser', 'bookcase']);
+  });
+
+  it('leaves a rug alone', () => {
+    const d = withZoned();
+    d.floors[0]!.placements = [
+      place('dresser', { x: 0, y: 0 }, 'dresser'),
+      place('rug', { x: 0, y: 600 }, 'rug'),
+    ];
+
+    expect(validateFloor(d, d.floors[0]!).map((i) => i.kind)).not.toContain('clearance');
+  });
+
+  it('flags both the overlap and the clearance when something is properly in the way', () => {
+    // Two distinct problems with one cause, and the panel says both — a bookcase
+    // half inside the dresser is also blocking its drawers.
+    const d = withZoned();
+    d.floors[0]!.placements = [
+      place('dresser', { x: 0, y: 0 }, 'dresser'),
+      place('bookcase', { x: 0, y: 250 }, 'bookcase'),
+    ];
+
+    const kinds = validateFloor(d, d.floors[0]!).map((i) => i.kind);
+    expect(kinds).toContain('clearance');
+    expect(kinds).toContain('overlap');
+  });
+});

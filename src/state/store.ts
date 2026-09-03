@@ -174,6 +174,15 @@ export type StoreState = {
   wallDefaults: WallDefaults;
   /** The last completed measurement, held until the next one or a tool change. */
   measurement: Measurement | null;
+  /**
+   * The walkway probe's path, in document mm.
+   *
+   * Editor state, not document state, for the same reason a measurement is: it is a
+   * *question* asked of the plan, not a part of it. Storing the path rather than the
+   * answer means moving a chair re-answers it, because the narrowest gap is derived
+   * from the document every time it is read.
+   */
+  walkway: Vec2[] | null;
   /** The wall drag in flight, if any. */
   transform: WallTransform | null;
   /**
@@ -238,6 +247,7 @@ export type StoreState = {
   setGridEnabled: (on: boolean) => void;
   setSnapSuppressed: (on: boolean) => void;
   setMeasurement: (m: Measurement | null) => void;
+  setWalkway: (path: Vec2[] | null) => void;
   setTransform: (t: WallTransform | null) => void;
   setPlacementTransform: (t: PlacementTransform | null) => void;
   setPlacingItem: (itemId: Id | null) => void;
@@ -390,6 +400,7 @@ export const useStore = create<StoreState>((set, get) => ({
       draft: null,
       transform: null,
       measurement: null,
+      walkway: null,
       cursor: null,
       snapHints: [],
       calibrating: false,
@@ -413,6 +424,7 @@ export const useStore = create<StoreState>((set, get) => ({
       draft: null,
       transform: null,
       measurement: null,
+      walkway: null,
       cursor: null,
       snapHints: [],
       calibrating: false,
@@ -445,6 +457,7 @@ export const useStore = create<StoreState>((set, get) => ({
   snapSuppressed: false,
   wallDefaults: DEFAULT_WALL_DEFAULTS,
   measurement: null,
+  walkway: null,
   transform: null,
   calibrating: false,
   calibrationRef: null,
@@ -472,6 +485,9 @@ export const useStore = create<StoreState>((set, get) => ({
 
   setViewMode: (viewMode) => set({ viewMode, notice: null }),
   setTool: (tool) =>
+    // The walkway survives a tool change, unlike a measurement: it is a route you
+    // are working against while you move furniture, and losing it every time you
+    // pick up the select tool would make it useless for the one job it has.
     set({ tool, draft: null, transform: null, placementTransform: null, measurement: null }),
   setShapeKind: (shapeKind) => set({ shapeKind, tool: 'shape', draft: null }),
   setOpeningKind: (openingKind) => set({ openingKind, tool: 'opening', draft: null }),
@@ -495,6 +511,7 @@ export const useStore = create<StoreState>((set, get) => ({
   setGridEnabled: (gridEnabled) => set({ gridEnabled }),
   setSnapSuppressed: (snapSuppressed) => set({ snapSuppressed }),
   setMeasurement: (measurement) => set({ measurement }),
+  setWalkway: (walkway) => set({ walkway }),
   setTransform: (transform) => set({ transform }),
   setPlacementTransform: (placementTransform) => set({ placementTransform }),
   // Arming an item cancels a selection drag and vice versa: the next click cannot

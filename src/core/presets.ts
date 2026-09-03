@@ -16,6 +16,21 @@
  */
 
 import type { ItemDraft } from './catalog';
+import type { ClearanceZone } from './document';
+
+/**
+ * The standard clearance library, from PLAN.md §9.3: 900mm in front of dressers,
+ * 1067mm behind dining chairs, 1200mm at appliance doors.
+ *
+ * Named constants rather than inline literals because the same number means the same
+ * thing on four appliances, and because a reader should be able to see the library as
+ * a library. Zones are only on the presets that genuinely need one — a bookcase does
+ * not stop working when a chair is in front of it, and a zone that fires on something
+ * nobody would call a mistake makes the whole panel easier to ignore.
+ */
+const DRAWER_PULL: ClearanceZone = { edge: 'front', depthMm: 900, reason: 'drawer pull' };
+const CHAIR_PULL_OUT: ClearanceZone = { edge: 'back', depthMm: 1067, reason: 'chair pull-out' };
+const APPLIANCE_DOOR = (reason: string): ClearanceZone => ({ edge: 'front', depthMm: 1200, reason });
 
 export type Preset = ItemDraft & {
   /** Stable key for lists and tests; never stored in a document. */
@@ -35,8 +50,8 @@ export const PRESETS: readonly Preset[] = [
   { key: 'sofa-3', group: 'Seating', name: 'Sofa (3-seat)', category: 'seating', shape: 'rect', widthMm: 2130, depthMm: 910, heightMm: 840, voidBelowMm: 0 },
   { key: 'loveseat', group: 'Seating', name: 'Loveseat', category: 'seating', shape: 'rect', widthMm: 1520, depthMm: 910, heightMm: 840, voidBelowMm: 0 },
   { key: 'armchair', group: 'Seating', name: 'Armchair', category: 'seating', shape: 'rect', widthMm: 810, depthMm: 860, heightMm: 800, voidBelowMm: 0 },
-  { key: 'dining-chair', group: 'Seating', name: 'Dining chair', category: 'seating', shape: 'rect', widthMm: 460, depthMm: 510, heightMm: 900, voidBelowMm: 0 },
-  { key: 'office-chair', group: 'Seating', name: 'Office chair', category: 'seating', shape: 'circle', widthMm: 660, depthMm: 660, heightMm: 1100, voidBelowMm: 0 },
+  { key: 'dining-chair', group: 'Seating', name: 'Dining chair', category: 'seating', shape: 'rect', widthMm: 460, depthMm: 510, heightMm: 900, voidBelowMm: 0, clearances: [CHAIR_PULL_OUT] },
+  { key: 'office-chair', group: 'Seating', name: 'Office chair', category: 'seating', shape: 'circle', widthMm: 660, depthMm: 660, heightMm: 1100, voidBelowMm: 0, clearances: [{ edge: 'back', depthMm: 900, reason: 'chair roll-back' }] },
 
   // -- Tables --------------------------------------------------------------
   // 720mm of apron clearance is what lets chairs tuck under and a rug lie beneath.
@@ -47,16 +62,16 @@ export const PRESETS: readonly Preset[] = [
   { key: 'desk', group: 'Tables', name: 'Desk', category: 'table', shape: 'rect', widthMm: 1520, depthMm: 760, heightMm: 750, voidBelowMm: 700, canHostSurface: true },
 
   // -- Storage -------------------------------------------------------------
-  { key: 'dresser', group: 'Storage', name: 'Dresser', category: 'storage', shape: 'rect', widthMm: 1520, depthMm: 510, heightMm: 810, voidBelowMm: 0, canHostSurface: true },
+  { key: 'dresser', group: 'Storage', name: 'Dresser', category: 'storage', shape: 'rect', widthMm: 1520, depthMm: 510, heightMm: 810, voidBelowMm: 0, canHostSurface: true, clearances: [DRAWER_PULL] },
   { key: 'bookcase', group: 'Storage', name: 'Bookcase', category: 'storage', shape: 'rect', widthMm: 810, depthMm: 300, heightMm: 1830, voidBelowMm: 0, canHostSurface: false },
-  { key: 'wardrobe', group: 'Storage', name: 'Wardrobe', category: 'storage', shape: 'rect', widthMm: 1200, depthMm: 600, heightMm: 2000, voidBelowMm: 0, canHostSurface: false },
+  { key: 'wardrobe', group: 'Storage', name: 'Wardrobe', category: 'storage', shape: 'rect', widthMm: 1200, depthMm: 600, heightMm: 2000, voidBelowMm: 0, canHostSurface: false, clearances: [{ edge: 'front', depthMm: 900, reason: 'wardrobe doors' }] },
   { key: 'tv-stand', group: 'Storage', name: 'TV stand', category: 'storage', shape: 'rect', widthMm: 1520, depthMm: 400, heightMm: 500, voidBelowMm: 0, canHostSurface: true },
 
   // -- Appliances ----------------------------------------------------------
-  { key: 'fridge', group: 'Appliances', name: 'Refrigerator', category: 'appliance', shape: 'rect', widthMm: 910, depthMm: 760, heightMm: 1780, voidBelowMm: 0 },
-  { key: 'dishwasher', group: 'Appliances', name: 'Dishwasher', category: 'appliance', shape: 'rect', widthMm: 610, depthMm: 610, heightMm: 850, voidBelowMm: 0 },
-  { key: 'range', group: 'Appliances', name: 'Range', category: 'appliance', shape: 'rect', widthMm: 760, depthMm: 660, heightMm: 920, voidBelowMm: 0 },
-  { key: 'washer', group: 'Appliances', name: 'Washer', category: 'appliance', shape: 'rect', widthMm: 690, depthMm: 760, heightMm: 970, voidBelowMm: 0 },
+  { key: 'fridge', group: 'Appliances', name: 'Refrigerator', category: 'appliance', shape: 'rect', widthMm: 910, depthMm: 760, heightMm: 1780, voidBelowMm: 0, clearances: [APPLIANCE_DOOR('fridge door')] },
+  { key: 'dishwasher', group: 'Appliances', name: 'Dishwasher', category: 'appliance', shape: 'rect', widthMm: 610, depthMm: 610, heightMm: 850, voidBelowMm: 0, clearances: [APPLIANCE_DOOR('dishwasher door')] },
+  { key: 'range', group: 'Appliances', name: 'Range', category: 'appliance', shape: 'rect', widthMm: 760, depthMm: 660, heightMm: 920, voidBelowMm: 0, clearances: [APPLIANCE_DOOR('oven door')] },
+  { key: 'washer', group: 'Appliances', name: 'Washer', category: 'appliance', shape: 'rect', widthMm: 690, depthMm: 760, heightMm: 970, voidBelowMm: 0, clearances: [APPLIANCE_DOOR('washer door')] },
 
   // -- Everything else -----------------------------------------------------
   // Mounted at 400mm by default, which is a wall-hung screen above a stand.

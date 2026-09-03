@@ -26,17 +26,30 @@ import {
   type SpaceDocument,
 } from './document';
 
-/** The footprint in document space: mirrored, rotated, then translated. */
-export function worldOutline(placement: Placement, item: CatalogItem): Polygon {
-  let poly = item.footprint.outline;
+/**
+ * Local footprint coordinates to document space: mirrored, rotated, then translated.
+ *
+ * Exported because a clearance zone has to land in exactly the same frame as the
+ * thing it belongs to. A zone built off the footprint's local bounding box and put
+ * through this cannot disagree with the item about which way it is facing — and it
+ * gets flipping for free, which is right: mirroring an item really does move its
+ * left-hand drawer to the other side.
+ */
+export function toWorld(placement: Placement, poly: Polygon): Polygon {
+  let out = poly;
 
   if (placement.flipped) {
-    poly = { ...poly, pts: poly.pts.map((p) => ({ x: -p.x, y: p.y })).reverse() };
+    out = { ...out, pts: out.pts.map((p) => ({ x: -p.x, y: p.y })).reverse() };
   }
   if (placement.rotation !== 0) {
-    poly = rotatePolygon(poly, toRadians(placement.rotation));
+    out = rotatePolygon(out, toRadians(placement.rotation));
   }
-  return roundPolygon(translate(poly, placement.position));
+  return roundPolygon(translate(out, placement.position));
+}
+
+/** The footprint in document space. */
+export function worldOutline(placement: Placement, item: CatalogItem): Polygon {
+  return toWorld(placement, item.footprint.outline);
 }
 
 /** The effective height of a placement, honouring any per-placement override. */

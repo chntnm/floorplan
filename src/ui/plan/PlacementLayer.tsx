@@ -4,6 +4,7 @@ import type Konva from 'konva';
 import type { Floor, Id, Placement, SpaceDocument } from '../../core/document';
 import { findItem } from '../../core/document';
 import { worldOutline } from '../../core/placement';
+import { zoneOutline } from '../../core/clearance';
 import { backOffset } from '../../core/placement-snap';
 import { rotate, toRadians } from '../../core/geometry/vec';
 import { docToScreen, flattenToScreen, pxToMm, type Viewport } from '../../core/viewport';
@@ -110,6 +111,38 @@ export function PlacementLayer({
           />
         );
       })}
+
+      {/* Clearance zones, on the selected item only.
+
+          Drawn rather than merely reported, for the same reason the swing arc is: a
+          warning that says "the bookcase blocks the drawer pull" is an argument, and
+          the dashed rectangle it is about is the evidence. On the selection only,
+          because six dining chairs with pull-out zones would otherwise cover the
+          floor in hatching and tell you nothing. */}
+      {only
+        ? (() => {
+            const placement = placements.find((p) => p.id === only);
+            const item = placement ? findItem(doc, placement.itemId) : undefined;
+            if (!placement || !item?.clearances) return null;
+
+            return item.clearances.map((zone, i) => {
+              const outline = zoneOutline(placement, item, zone);
+              if (!outline) return null;
+              return (
+                <Line
+                  key={`zone-${i}`}
+                  points={flattenToScreen(viewport, outline.pts)}
+                  closed
+                  listening={false}
+                  fill={theme.zoneFill}
+                  stroke={theme.zoneStroke}
+                  strokeWidth={1}
+                  dash={[5, 4]}
+                />
+              );
+            });
+          })()
+        : null}
 
       {/* The rotate handle, on a single selected placement. It sticks out of the
           item's back — the edge wall snap aligns — so "handle pointing up" and

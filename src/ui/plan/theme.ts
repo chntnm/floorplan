@@ -22,6 +22,9 @@ export type PlanTheme = {
   /** The door-swing symbol: the arc and leaf line, and the sector behind them. */
   swingStroke: string;
   swingFill: string;
+  /** Clearance zones on the selected item. */
+  zoneStroke: string;
+  zoneFill: string;
   placementFill: string;
   placementStroke: string;
   draft: string;
@@ -45,6 +48,8 @@ const LIGHT: PlanTheme = {
   openingFill: '#f4f4f2',
   swingStroke: '#8c8c86',
   swingFill: 'rgba(140, 140, 134, 0.10)',
+  zoneStroke: 'rgba(200, 84, 31, 0.55)',
+  zoneFill: 'rgba(200, 84, 31, 0.10)',
   placementFill: 'rgba(120, 120, 130, 0.35)',
   placementStroke: '#6b6b66',
   draft: '#2f6f5e',
@@ -67,6 +72,8 @@ const DARK: PlanTheme = {
   openingFill: '#17171a',
   swingStroke: '#7e7e88',
   swingFill: 'rgba(150, 150, 165, 0.12)',
+  zoneStroke: 'rgba(232, 131, 74, 0.6)',
+  zoneFill: 'rgba(232, 131, 74, 0.12)',
   placementFill: 'rgba(150, 150, 165, 0.32)',
   placementStroke: '#91919a',
   draft: '#4d9d86',

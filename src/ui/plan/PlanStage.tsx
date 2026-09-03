@@ -38,11 +38,18 @@ import { GridLayer } from './GridLayer';
 import { PlacementLayer } from './PlacementLayer';
 import { StructureLayer } from './StructureLayer';
 import { usePlanTheme } from './theme';
+import { useWalkwayProbe } from '../useWalkwayProbe';
 
 /** Wheel notch → zoom factor. 1.0015^deltaY tracks a trackpad as smoothly as a mouse. */
 const ZOOM_SENSITIVITY = 1.0015;
 
-const DRAW_TOOLS: ReadonlySet<PlanTool> = new Set<PlanTool>(['wall', 'room', 'shape', 'dimension']);
+const DRAW_TOOLS: ReadonlySet<PlanTool> = new Set<PlanTool>([
+  'wall',
+  'room',
+  'shape',
+  'dimension',
+  'walkway',
+]);
 
 /**
  * How close two consecutive clicks must be, in screen pixels, to read as "click the
@@ -76,6 +83,8 @@ export function PlanStage() {
   const lastClickPx = useRef<{ x: number; y: number } | null>(null);
   const calDrag = useRef(false);
   const theme = usePlanTheme();
+  // Derived from the document, not stored: move the sofa and the gap moves with it.
+  const { path, probe } = useWalkwayProbe();
 
   const {
     doc,
@@ -173,7 +182,9 @@ export function PlanStage() {
       // loop only works when the final click happens to land in the same grid cell
       // as the start — and never at all with the grid off or Alt held.
       const inFlight =
-        state.draft?.tool === 'wall' ? [...snapCandidates, ...state.draft.points] : snapCandidates;
+        state.draft?.tool === 'wall' || state.draft?.tool === 'walkway'
+          ? [...snapCandidates, ...state.draft.points]
+          : snapCandidates;
 
       const ctx: SnapContext = {
         gridMm: documentGridMm(state.doc),
@@ -415,9 +426,48 @@ export function PlanStage() {
         store.setMeasurement(null);
         store.setDraft({ tool: 'dimension', start: p, cursor: p });
         return;
+      case 'walkway': {
+        // Click-to-place, exactly like the wall chain — the same gesture, because it
+        // is the same shape of thing and learning two would be one too many. It
+        // commits to editor state rather than to the document: a route through the
+        // room is a question you ask of the plan, not part of it.
+        const pos = stage.getPointerPosition();
+        const previous = lastClickPx.current;
+        if (pos) lastClickPx.current = { x: pos.x, y: pos.y };
+
+        if (!draft || draft.tool !== 'walkway') {
+          store.setWalkway(null);
+          store.setDraft({ tool: 'walkway', points: [p], cursor: p });
+          return;
+        }
+
+        const repeated =
+          pos && previous && Math.hypot(pos.x - previous.x, pos.y - previous.y) <= REPEAT_CLICK_PX;
+        if (repeated) {
+          finishWalkway(draft.points);
+          return;
+        }
+
+        store.setDraft({ tool: 'walkway', points: [...draft.points, p], cursor: p });
+        return;
+      }
       default:
         return;
     }
+  };
+
+  /**
+   * End the walkway gesture, keeping the path only if there is a path.
+   *
+   * A single click and a stray Enter both land here, and a one-point route has no
+   * width to measure — clearing is better than leaving a dot on the plan that
+   * reports nothing.
+   */
+  const finishWalkway = (points: Vec2[]) => {
+    const store = useStore.getState();
+    store.setWalkway(points.length >= 2 ? points : null);
+    store.setDraft(null);
+    lastClickPx.current = null;
   };
 
   const onMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -606,6 +656,7 @@ export function PlanStage() {
           addWallChain(current.points);
           store.setDraft(null);
         }
+        if (current?.tool === 'walkway') finishWalkway(current.points);
         lastClickPx.current = null;
         return;
       }
@@ -732,7 +783,10 @@ export function PlanStage() {
           theme={theme}
           selection={selection}
           interactive={placementsInteractive}
-          selectable={placementsInteractive && !placingItemId}
+          // Same rule as the structure layer: only the Select tool selects. With the
+          // walkway armed a click on the sofa belongs to the route being drawn, and
+          // a selectable layer would swallow it.
+          selectable={placementsInteractive && !placingItemId && tool === 'select'}
           transform={placementTransform}
           flagged={flagged}
           onSelect={onSelect}
@@ -742,6 +796,8 @@ export function PlanStage() {
         <DraftLayer
           draft={draft}
           measurement={measurement}
+          walkway={path}
+          probe={probe}
           calibrationRef={calibrationRef}
           snapHints={snapHints}
           cursor={cursor}

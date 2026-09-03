@@ -15,7 +15,7 @@
  * Pure — no DOM, no store.
  */
 
-import type { Category, CatalogItem, Id, MountKind } from './document';
+import type { Category, CatalogItem, ClearanceZone, Id, MountKind } from './document';
 import { makeFootprint, type Footprint } from './geometry/footprint';
 import type { FootprintGenerator } from './geometry/generators';
 import type { ShapeKind } from './tools';
@@ -92,6 +92,8 @@ export type ItemDraft = {
   surfaceHeightMm?: number;
   canHostSurface?: boolean;
   defaultMount?: MountKind;
+  /** Space this item needs kept clear around it. See `core/clearance.ts`. */
+  clearances?: ClearanceZone[];
   color?: string;
   quantityOwned?: number;
   notes?: string;
@@ -189,6 +191,11 @@ export function createCatalogItem(draft: ItemDraft, id: Id): CatalogItem {
     canHostSurface: draft.canHostSurface ?? defaults.canHostSurface,
     footprint,
     defaultMount: draft.defaultMount ?? 'floor',
+    // Only when there are some: an empty array and an absent field mean the same
+    // thing and writing both into files makes them diff differently for no reason.
+    ...(draft.clearances && draft.clearances.length > 0
+      ? { clearances: draft.clearances.map((z) => ({ ...z })) }
+      : {}),
     color: draft.color ?? defaults.color,
     quantityOwned,
     ...(draft.notes ? { notes: draft.notes } : {}),
@@ -208,6 +215,7 @@ export function draftFromItem(item: CatalogItem, shape: ShapeKind = 'rect'): Ite
     ...(item.surfaceHeightMm !== undefined ? { surfaceHeightMm: item.surfaceHeightMm } : {}),
     canHostSurface: item.canHostSurface,
     defaultMount: item.defaultMount,
+    ...(item.clearances ? { clearances: item.clearances.map((z) => ({ ...z })) } : {}),
     color: item.color,
     quantityOwned: item.quantityOwned,
     ...(item.notes ? { notes: item.notes } : {}),

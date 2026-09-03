@@ -25,6 +25,7 @@ import {
   rangesOverlap,
 } from './openings';
 import { clearanceVolume, leafOf, pocketFitReason } from './swing';
+import { EDGE_LABELS, findClearanceViolations } from './clearance';
 import { findCollisions, volumesCollide, type Volume } from './geometry/collision';
 import {
   MountCycleError,
@@ -43,7 +44,8 @@ export type IssueKind =
   | 'opening-fit'
   | 'opening-overlap'
   | 'swing-blocked'
-  | 'pocket-blocked';
+  | 'pocket-blocked'
+  | 'clearance';
 
 export type IssueSeverity = 'blocking' | 'warning';
 
@@ -259,6 +261,22 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
     }
   }
 
+  // Clearance zones. Walls are deliberately not tested — see `clearance.ts`; the
+  // walkway probe is the check that includes them.
+  for (const violation of findClearanceViolations(doc, floor)) {
+    issues.push({
+      kind: 'clearance',
+      severity: 'warning',
+      message:
+        `${label(doc, violation.intruderId, floor)} blocks the ${violation.zone.reason} ` +
+        `clearance ${EDGE_LABELS[violation.zone.edge]} ${label(doc, violation.placementId, floor)}.`,
+      refs: [
+        { kind: 'placement', id: violation.placementId },
+        { kind: 'placement', id: violation.intruderId },
+      ],
+    });
+  }
+
   for (const [i, j] of findCollisions(volumes)) {
     const a = owners[i]!;
     const b = owners[j]!;
@@ -283,7 +301,8 @@ export function validateFloor(doc: SpaceDocument, floor: Floor): Issue[] {
     'pocket-blocked': 6,
     'swing-blocked': 7,
     headroom: 8,
-    overlap: 9,
+    clearance: 9,
+    overlap: 10,
   };
   return issues.sort((x, y) => order[x.kind] - order[y.kind]);
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { structureIsEditable } from '../core/modes';
-import { formatArea, formatLength } from '../core/units';
+import { formatArea, formatLength, type DisplayUnit } from '../core/units';
 import { wallAngleDeg, wallLength } from '../core/geometry/wall';
 import { activeFloor, useStore } from '../state/store';
 import {
@@ -21,7 +21,9 @@ import {
 import { findItem, type Floor, type SpaceDocument } from '../core/document';
 import { resolveElevation, roomAt, surfaceHeight } from '../core/placement';
 import { ROTATION_STEP_DEG } from '../core/placement-snap';
-import { validateFloor, type Issue } from '../core/validation';
+import { validateFloor, type Issue, type IssueKind } from '../core/validation';
+import { WALKWAY_MIN_MM, isTooNarrow } from '../core/walkway';
+import { useWalkwayProbe } from './useWalkwayProbe';
 import { backgroundExtentMm, isCalibrated } from '../core/calibration';
 import {
   OPENING_KINDS,
@@ -40,6 +42,47 @@ import {
 import { hasAsset } from '../state/assets';
 import { LengthInput, NumberInput } from './LengthField';
 import type { MountKind, Opening, OpeningKind } from '../core/document';
+
+/**
+ * What each check is called, for the group headings.
+ *
+ * Several kinds share a heading on purpose: "a mount is broken" is one thing to a
+ * reader whether the cause was a missing item, a deleted host or a cycle. The
+ * grouping is by *what you would do about it*, not by the enum.
+ */
+const ISSUE_GROUPS: Record<IssueKind, string> = {
+  uncalibrated: 'Calibration',
+  'broken-mount': 'Mounts',
+  'missing-item': 'Mounts',
+  'below-floor': 'Mounts',
+  'opening-fit': 'Openings',
+  'opening-overlap': 'Openings',
+  'pocket-blocked': 'Openings',
+  'swing-blocked': 'Door swing',
+  headroom: 'Headroom',
+  clearance: 'Clearance',
+  overlap: 'Overlaps',
+};
+
+/**
+ * Issues in their existing order, cut into runs by heading.
+ *
+ * `validateFloor` already sorts blocking-first then by kind, so walking it in order
+ * and starting a group whenever the heading changes preserves that priority — the
+ * top group is still the thing most worth doing something about. Sorting again here
+ * would be a second opinion about severity, in the component least qualified to have
+ * one.
+ */
+function groupIssues(issues: readonly Issue[]): { label: string; issues: Issue[] }[] {
+  const groups: { label: string; issues: Issue[] }[] = [];
+  for (const issue of issues) {
+    const label = ISSUE_GROUPS[issue.kind];
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.issues.push(issue);
+    else groups.push({ label, issues: [issue] });
+  }
+  return groups;
+}
 
 const MOUNT_LABELS: Record<string, string> = {
   floor: 'On the floor',
@@ -110,6 +153,55 @@ function OpeningSwing({ opening }: { opening: Opening }) {
           testId="swing-angle"
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The walkway probe's answer, and a way to be rid of it.
+ *
+ * Not a validation issue, because the route is not part of the document — nobody
+ * else opening this file drew it, and a warning that survives into their copy would
+ * be about a question they never asked. It reads as what it is: a measurement you
+ * took, sitting next to the plan until you take another.
+ */
+function WalkwayReadout({ unit }: { unit: DisplayUnit }) {
+  const { probe } = useWalkwayProbe();
+
+  if (!probe) {
+    return (
+      <p className="panel__empty" data-testid="walkway-empty">
+        Pick the Walkway tool and click a route through the space. Enter finishes it.
+      </p>
+    );
+  }
+
+  return (
+    <div data-testid="walkway-readout">
+      <Field
+        label="Narrowest"
+        value={probe.blocked ? 'blocked' : formatLength(Math.round(probe.widthMm), unit)}
+      />
+      {probe.blocked ? (
+        <p className="panel__warn" data-testid="walkway-warning">
+          The route runs through something solid.
+        </p>
+      ) : isTooNarrow(probe) ? (
+        <p className="panel__warn" data-testid="walkway-warning">
+          Narrower than {formatLength(WALKWAY_MIN_MM, unit)}, the usual minimum for a
+          route you use every day.
+        </p>
+      ) : null}
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="clear-walkway"
+          onClick={() => useStore.getState().setWalkway(null)}
+        >
+          Clear route
+        </button>
+      </div>
     </div>
   );
 }
@@ -475,34 +567,55 @@ export function PropertiesPanel() {
         </div>
       ) : null}
 
+      <h2 className="panel__heading">Walkway</h2>
+      <WalkwayReadout unit={unit} />
+
       <h2 className="panel__heading">Validation</h2>
       {issues.length === 0 ? (
         <p className="panel__empty" data-testid="no-issues">
-          No issues. Item clearance zones and the walkway probe arrive in phase 7.
+          No issues.
         </p>
       ) : (
-        <ul className="issues" data-testid="issue-list">
-          {issues.map((issue, i) => (
-            <li
-              key={i}
-              className="issue"
-              data-severity={issue.severity}
-              data-kind={issue.kind}
-              data-testid={issue.kind === 'uncalibrated' ? 'placement-blocked' : 'issue'}
-            >
-              {/* Clicking an issue selects what it points at, so the panel is a way
-                  to find the problem rather than only a way to hear about it. */}
-              <button
-                type="button"
-                className="issue__button"
-                disabled={issue.refs.length === 0}
-                onClick={() => selectIssue(issue)}
-              >
-                {issue.message}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <p className="panel__count" data-testid="issue-summary">
+            {issues.length === 1 ? '1 issue' : `${issues.length} issues`}
+          </p>
+          {/* One list, headed in place.
+
+              Deliberately not one <ul> per group: the panel is read top to bottom as
+              a single ordered worklist, and the headings are signposts along it
+              rather than sections you would ever want to reorder or collapse
+              independently. */}
+          <ul className="issues" data-testid="issue-list">
+            {groupIssues(issues).flatMap((group) => [
+              <li key={`group-${group.label}`} className="issues__group">
+                {group.label}
+                <span className="issues__count">{group.issues.length}</span>
+              </li>,
+              ...group.issues.map((issue, i) => (
+                <li
+                  key={`${group.label}-${i}`}
+                  className="issue"
+                  data-severity={issue.severity}
+                  data-kind={issue.kind}
+                  data-testid={issue.kind === 'uncalibrated' ? 'placement-blocked' : 'issue'}
+                >
+                  {/* Clicking an issue selects what it points at, so the panel is a
+                      way to find the problem rather than only a way to hear about
+                      it. */}
+                  <button
+                    type="button"
+                    className="issue__button"
+                    disabled={issue.refs.length === 0}
+                    onClick={() => selectIssue(issue)}
+                  >
+                    {issue.message}
+                  </button>
+                </li>
+              )),
+            ])}
+          </ul>
+        </>
       )}
     </aside>
   );

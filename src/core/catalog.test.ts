@@ -148,3 +148,44 @@ describe('the preset library', () => {
     expect(new Set(PRESETS.map((p) => p.key)).size).toBe(PRESETS.length);
   });
 });
+
+describe('clearance zones on an item', () => {
+  const ZONE = { edge: 'front' as const, depthMm: 900, reason: 'drawer pull' };
+
+  function draft(over: Partial<ItemDraft> = {}): ItemDraft {
+    return {
+      name: 'Dresser',
+      category: 'storage',
+      shape: 'rect',
+      widthMm: 1500,
+      depthMm: 500,
+      heightMm: 810,
+      ...over,
+    };
+  }
+
+  it('carries them onto the item', () => {
+    const item = createCatalogItem(draft({ clearances: [ZONE] }), 'i1');
+    expect(item.clearances).toEqual([ZONE]);
+  });
+
+  it('leaves the field off entirely when there are none', () => {
+    // An empty array and an absent field mean the same thing; writing both into
+    // files would make them diff differently for no reason.
+    expect(createCatalogItem(draft(), 'i1').clearances).toBeUndefined();
+    expect(createCatalogItem(draft({ clearances: [] }), 'i2').clearances).toBeUndefined();
+  });
+
+  it('copies the zones rather than aliasing what it was handed', () => {
+    const zones = [{ ...ZONE }];
+    const item = createCatalogItem(draft({ clearances: zones }), 'i1');
+    zones[0]!.depthMm = 1;
+
+    expect(item.clearances![0]!.depthMm).toBe(900);
+  });
+
+  it('round-trips through the edit form', () => {
+    const item = createCatalogItem(draft({ clearances: [ZONE] }), 'i1');
+    expect(draftFromItem(item).clearances).toEqual([ZONE]);
+  });
+});

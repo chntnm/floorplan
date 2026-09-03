@@ -23,7 +23,7 @@ import { area, ensureCounterClockwise, polygon, roundPolygon, translate } from '
 import { isDegenerate } from './geometry/wall';
 import type { Vec2 } from './geometry/vec';
 
-export const PLAN_TOOLS = ['select', 'wall', 'room', 'opening', 'shape', 'dimension'] as const;
+export const PLAN_TOOLS = ['select', 'wall', 'room', 'opening', 'shape', 'dimension', 'walkway'] as const;
 export type PlanTool = (typeof PLAN_TOOLS)[number];
 
 export const PLAN_TOOL_LABELS: Record<PlanTool, string> = {
@@ -33,6 +33,7 @@ export const PLAN_TOOL_LABELS: Record<PlanTool, string> = {
   opening: 'Opening',
   shape: 'Shape',
   dimension: 'Measure',
+  walkway: 'Walkway',
 };
 
 /** Single-key shortcuts, matching the first letter where it is free. */
@@ -43,6 +44,7 @@ export const PLAN_TOOL_KEYS: Record<PlanTool, string> = {
   opening: 'o',
   shape: 's',
   dimension: 'd',
+  walkway: 'p', // path
 };
 
 /**
@@ -81,7 +83,10 @@ export type Draft =
   | { tool: 'wall'; points: Vec2[]; cursor: Vec2 | null }
   | { tool: 'room'; start: Vec2; cursor: Vec2 }
   | { tool: 'shape'; kind: ShapeKind; start: Vec2; cursor: Vec2 }
-  | { tool: 'dimension'; start: Vec2; cursor: Vec2 };
+  | { tool: 'dimension'; start: Vec2; cursor: Vec2 }
+  /** The walkway probe's path. Click-to-place like a wall chain, but it commits to
+      editor state rather than to the document — see `StoreState.walkway`. */
+  | { tool: 'walkway'; points: Vec2[]; cursor: Vec2 | null };
 
 export type IdFactory = () => Id;
 
