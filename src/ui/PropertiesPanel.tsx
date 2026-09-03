@@ -1,12 +1,378 @@
 import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { structureIsEditable } from '../core/modes';
-import { formatArea, formatLength } from '../core/units';
+import { formatArea, formatLength, type DisplayUnit } from '../core/units';
 import { wallAngleDeg, wallLength } from '../core/geometry/wall';
 import { activeFloor, useStore } from '../state/store';
-import { deleteSelection, setRoomName } from '../state/actions';
+import {
+  deleteSelection,
+  nudgeBackgroundRotation,
+  setCeilingDrop,
+  setOpeningSwing,
+  setPlacementMount,
+  updateOpening,
+  removeBackground,
+  rotatePlacementBy,
+  setBackgroundLocked,
+  setBackgroundOpacity,
+  setPlacementElevation,
+  setRoomName,
+  setRoomCeilingHeight,
+  detectFloorRooms,
+  addFloor,
+  deleteFloor,
+  movePlacementToFloor,
+  renameFloor,
+  setFloorCeilingHeight,
+  setFloorElevation,
+} from '../state/actions';
+import { floorBelow, orderedFloors } from '../core/floors';
+import { findItem, type Floor, type SpaceDocument } from '../core/document';
+import { resolveElevation, roomAt, surfaceHeight } from '../core/placement';
+import { ROTATION_STEP_DEG } from '../core/placement-snap';
+import { validateFloor, type Issue, type IssueKind } from '../core/validation';
+import { WALKWAY_MIN_MM, isTooNarrow } from '../core/walkway';
+import { useWalkwayProbe } from './useWalkwayProbe';
+import { backgroundExtentMm, isCalibrated } from '../core/calibration';
+import {
+  OPENING_KINDS,
+  OPENING_KIND_LABELS,
+  OPENING_DEFAULTS,
+  openingRange,
+  openingSpan,
+} from '../core/openings';
+import {
+  LEAF_STYLE_LABELS,
+  MAX_SWING_DEG,
+  MIN_SWING_DEG,
+  leafOf,
+  movingLeafOf,
+} from '../core/swing';
+import { hasAsset } from '../state/assets';
+import { LengthInput, NumberInput } from './LengthField';
+import type { MountKind, Opening, OpeningKind } from '../core/document';
+
+/**
+ * What each check is called, for the group headings.
+ *
+ * Several kinds share a heading on purpose: "a mount is broken" is one thing to a
+ * reader whether the cause was a missing item, a deleted host or a cycle. The
+ * grouping is by *what you would do about it*, not by the enum.
+ */
+const ISSUE_GROUPS: Record<IssueKind, string> = {
+  uncalibrated: 'Calibration',
+  'broken-mount': 'Mounts',
+  'missing-item': 'Mounts',
+  'below-floor': 'Mounts',
+  'opening-fit': 'Openings',
+  'opening-overlap': 'Openings',
+  'pocket-blocked': 'Openings',
+  'swing-blocked': 'Door swing',
+  headroom: 'Headroom',
+  clearance: 'Clearance',
+  overlap: 'Overlaps',
+};
+
+/**
+ * Issues in their existing order, cut into runs by heading.
+ *
+ * `validateFloor` already sorts blocking-first then by kind, so walking it in order
+ * and starting a group whenever the heading changes preserves that priority — the
+ * top group is still the thing most worth doing something about. Sorting again here
+ * would be a second opinion about severity, in the component least qualified to have
+ * one.
+ */
+function groupIssues(issues: readonly Issue[]): { label: string; issues: Issue[] }[] {
+  const groups: { label: string; issues: Issue[] }[] = [];
+  for (const issue of issues) {
+    const label = ISSUE_GROUPS[issue.kind];
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.issues.push(issue);
+    else groups.push({ label, issues: [issue] });
+  }
+  return groups;
+}
+
+const MOUNT_LABELS: Record<string, string> = {
+  floor: 'On the floor',
+  surface: 'On a surface',
+  wall: 'Wall-mounted',
+  ceiling: 'Hanging',
+};
+
+function hostName(doc: SpaceDocument, floor: Floor, hostId: string): string {
+  const host = floor.placements.find((p) => p.id === hostId);
+  const item = host ? findItem(doc, host.itemId) : undefined;
+  return item?.name ?? 'something that is gone';
+}
+
+/** Select what an issue points at, so the panel is a way to find the problem. */
+function selectIssue(issue: Issue): void {
+  useStore.getState().setSelection(issue.refs.map((ref) => ({ kind: ref.kind, id: ref.id })));
+}
 
 /** A labelled read-only field. */
+/**
+ * Hanging the leaf: which end it is fixed at, which side it opens onto, how far.
+ *
+ * Flip buttons rather than selects, because there is no honest label for the two
+ * sides of a wall — "front" and "back" mean nothing to anyone looking at a plan.
+ * The swing arc in the drawing is what makes the choice legible, so the control's
+ * job is to change it and let you look, which is what a CAD tool gives you too.
+ *
+ * Nothing here renders for a cased opening or a window: `movingLeafOf` returns null
+ * for them, and the narrowing is what lets the angle field exist only for a leaf
+ * that actually has an angle.
+ */
+function OpeningSwing({ opening }: { opening: Opening }) {
+  const leaf = movingLeafOf(opening);
+  if (!leaf) return null;
+
+  return (
+    <div data-testid="opening-swing">
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="flip-hinge"
+          onClick={() => setOpeningSwing(opening.id, { hinge: leaf.pivot === 'a' ? 'b' : 'a' })}
+        >
+          Flip hinge
+        </button>
+        {leaf.style === 'pocket' ? null : (
+          <button
+            type="button"
+            className="btn"
+            data-testid="flip-side"
+            onClick={() => setOpeningSwing(opening.id, { into: leaf.face === 'front' ? 'back' : 'front' })}
+          >
+            Flip side
+          </button>
+        )}
+      </div>
+      <Field label="Hinged" value={leaf.pivot === 'a' ? 'at wall start' : 'at wall end'} />
+      {leaf.style === 'hinged' ? (
+        <NumberInput
+          label="Swing angle"
+          value={leaf.angleDeg}
+          min={MIN_SWING_DEG}
+          max={MAX_SWING_DEG}
+          suffix="degrees"
+          onCommit={(deg) => setOpeningSwing(opening.id, { angleDeg: deg })}
+          testId="swing-angle"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The active floor's own properties, and the shape of the stack.
+ *
+ * Switching floors is in the top bar with the view controls; this is where a floor is
+ * named, given a datum and removed. The split is between navigation and property, not
+ * between two views of the same thing.
+ *
+ * Elevation is editable and signed rather than derived from the stack. A split level,
+ * a mezzanine and a garage half a storey down are all real buildings, and none of them
+ * survive a formula — so the formula only supplies the opening guess when a floor is
+ * created.
+ */
+function FloorProperties({ editable }: { editable: boolean }) {
+  const { doc, floorId } = useStore(
+    useShallow((s) => ({ doc: s.doc, floorId: s.doc.activeFloorId })),
+  );
+  const floor = activeFloor({ doc });
+  const unit = doc.displayUnit;
+  const [error, setError] = useState<string | null>(null);
+
+  const [draft, setDraft] = useState(floor.name);
+  useEffect(() => setDraft(floor.name), [floorId, floor.name]);
+
+  const below = floorBelow(doc, floorId);
+
+  return (
+    <div data-testid="floor-properties">
+      <label className="field field--input">
+        <span className="field__label">Name</span>
+        <input
+          value={draft}
+          aria-label="Floor name"
+          disabled={!editable}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            const next = draft.trim();
+            if (next && next !== floor.name) renameFloor(floorId, next);
+            else setDraft(floor.name);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') {
+              setDraft(floor.name);
+              e.currentTarget.blur();
+            }
+          }}
+        />
+      </label>
+      <LengthInput
+        label="Datum"
+        valueMm={floor.elevationMm}
+        unit={unit}
+        testId="floor-elevation"
+        onCommit={(mm) => setFloorElevation(floorId, mm)}
+      />
+      {/* Used by every placement that falls outside a traced room, and the height a
+          new floor above this one is stacked to clear. */}
+      <LengthInput
+        label="Ceiling"
+        valueMm={floor.defaultCeilingHeightMm}
+        unit={unit}
+        testId="floor-ceiling"
+        onCommit={(mm) => setFloorCeilingHeight(floorId, mm)}
+      />
+      <Field label="Below" value={below ? below.name : 'nothing — this is the bottom'} />
+
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="add-floor-above"
+          disabled={!editable}
+          onClick={() => {
+            setError(null);
+            addFloor('above');
+          }}
+        >
+          Add above
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-testid="add-floor-below"
+          disabled={!editable}
+          onClick={() => {
+            setError(null);
+            addFloor('below');
+          }}
+        >
+          Add below
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-testid="delete-floor"
+          disabled={!editable}
+          onClick={() => setError(deleteFloor(floorId))}
+        >
+          Delete floor
+        </button>
+      </div>
+      {error ? (
+        <p className="panel__warn" role="alert" data-testid="floor-error">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Derive rooms from the walls that enclose them.
+ *
+ * A button rather than something that runs on every wall edit. Detection renames and
+ * re-shapes rooms, and doing that continuously while a wall chain is half drawn would
+ * fight the person drawing it — a partition is briefly a spur, and a room briefly two.
+ * Asking is also what makes it one undo step you can reverse.
+ *
+ * The report is worth showing rather than swallowing, because "found nothing" and
+ * "found what was already there" are different answers to the same click.
+ */
+function RoomDetection({ editable }: { editable: boolean }) {
+  const [report, setReport] = useState<string | null>(null);
+  const roomCount = useStore((s) => activeFloor(s).rooms.length);
+
+  const run = () => {
+    const result = detectFloorRooms();
+    const parts: string[] = [];
+    if (result.added.length > 0) parts.push(`${result.added.length} new`);
+    if (result.updated.length > 0) parts.push(`${result.updated.length} reshaped`);
+    if (result.unmatched.length > 0) parts.push(`${result.unmatched.length} with no walls`);
+    setReport(parts.length > 0 ? parts.join(', ') : 'No change — every enclosed loop is already a room.');
+  };
+
+  return (
+    <div data-testid="room-detection">
+      <Field label="Traced" value={String(roomCount)} />
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="detect-rooms"
+          disabled={!editable}
+          title={editable ? undefined : 'Structure is locked in furnish mode.'}
+          onClick={run}
+        >
+          Detect rooms
+        </button>
+      </div>
+      {report ? (
+        <p className="panel__empty" data-testid="detect-report">
+          {report}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The walkway probe's answer, and a way to be rid of it.
+ *
+ * Not a validation issue, because the route is not part of the document — nobody
+ * else opening this file drew it, and a warning that survives into their copy would
+ * be about a question they never asked. It reads as what it is: a measurement you
+ * took, sitting next to the plan until you take another.
+ */
+function WalkwayReadout({ unit }: { unit: DisplayUnit }) {
+  const { probe } = useWalkwayProbe();
+
+  if (!probe) {
+    return (
+      <p className="panel__empty" data-testid="walkway-empty">
+        Pick the Walkway tool and click a route through the space. Enter finishes it.
+      </p>
+    );
+  }
+
+  return (
+    <div data-testid="walkway-readout">
+      <Field
+        label="Narrowest"
+        value={probe.blocked ? 'blocked' : formatLength(Math.round(probe.widthMm), unit)}
+      />
+      {probe.blocked ? (
+        <p className="panel__warn" data-testid="walkway-warning">
+          The route runs through something solid.
+        </p>
+      ) : isTooNarrow(probe) ? (
+        <p className="panel__warn" data-testid="walkway-warning">
+          Narrower than {formatLength(WALKWAY_MIN_MM, unit)}, the usual minimum for a
+          route you use every day.
+        </p>
+      ) : null}
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="clear-walkway"
+          onClick={() => useStore.getState().setWalkway(null)}
+        >
+          Clear route
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="field">
@@ -29,11 +395,21 @@ export function PropertiesPanel() {
   const unit = doc.displayUnit;
   const only = selection.length === 1 ? selection[0] : null;
 
+  const background = floor.background;
+
   const wall = only?.kind === 'wall' ? floor.walls.find((w) => w.id === only.id) : undefined;
   const room = only?.kind === 'room' ? floor.rooms.find((r) => r.id === only.id) : undefined;
+  const opening =
+    only?.kind === 'opening' ? floor.openings.find((o) => o.id === only.id) : undefined;
+  const openingWall = opening ? floor.walls.find((w) => w.id === opening.wallId) : undefined;
+  const placement =
+    only?.kind === 'placement' ? floor.placements.find((p) => p.id === only.id) : undefined;
+  const placementItem = placement ? findItem(doc, placement.itemId) : undefined;
+  const issues = validateFloor(doc, floor);
 
   // Held locally while typing so a rename is one undo step, not one per keystroke.
   const [draftName, setDraftName] = useState(room?.name ?? '');
+  const [mountError, setMountError] = useState<string | null>(null);
   useEffect(() => setDraftName(room?.name ?? ''), [room?.id, room?.name]);
 
   const commitName = () => {
@@ -77,8 +453,229 @@ export function PropertiesPanel() {
             />
           </label>
           <Field label="Area" value={formatArea(room.areaMm2, unit)} />
-          <Field label="Ceiling" value={formatLength(room.ceilingHeightMm, unit)} />
+          {/* Editable, because it is the one room property with a consequence: the
+              headroom check reads it through `ceilingHeightAt`, so lowering a
+              basement to 2100 immediately reports the wardrobe that no longer
+              fits. */}
+          <LengthInput
+            label="Ceiling"
+            valueMm={room.ceilingHeightMm}
+            unit={unit}
+            testId="room-ceiling"
+            onCommit={(mm) => setRoomCeilingHeight(room.id, mm)}
+          />
           <Field label="Vertices" value={String(room.boundary.pts.length)} />
+        </div>
+      ) : null}
+
+      {opening ? (
+        <div data-testid="opening-properties">
+          <label className="field field--input">
+            <span className="field__label">Kind</span>
+            <select
+              value={opening.kind}
+              aria-label="Opening kind"
+              onChange={(e) => {
+                // Changing kind re-sizes to that kind's standard, unless the opening
+                // has already been sized by hand — a door resized to 900 should not
+                // silently snap back to 813 because it became a pocket door.
+                const next = e.target.value as OpeningKind;
+                const current = OPENING_DEFAULTS[opening.kind];
+                const custom =
+                  opening.widthMm !== current.widthMm ||
+                  opening.heightMm !== current.heightMm ||
+                  opening.sillMm !== current.sillMm;
+                updateOpening(opening.id, custom ? { kind: next } : { kind: next, ...OPENING_DEFAULTS[next] });
+              }}
+            >
+              {OPENING_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {OPENING_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <LengthInput
+            label="Width"
+            valueMm={opening.widthMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { widthMm: mm })}
+            testId="opening-width"
+          />
+          <LengthInput
+            label="Height"
+            valueMm={opening.heightMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { heightMm: mm })}
+          />
+          <LengthInput
+            label="Sill"
+            valueMm={opening.sillMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { sillMm: mm })}
+          />
+          {/* Position along the wall, measured from its first end — the coordinate
+              `offsetMm` is actually stored in, so the number here is the number in
+              the file. */}
+          <LengthInput
+            label="From wall start"
+            valueMm={opening.offsetMm}
+            unit={unit}
+            onCommit={(mm) => updateOpening(opening.id, { offsetMm: mm })}
+          />
+          <Field
+            label="Wall"
+            value={
+              openingWall
+                ? `${formatLength(wallLength(openingWall), unit)} long`
+                : 'missing'
+            }
+          />
+          {/* Head height — sill plus height. The number that decides whether you
+              can walk under it, and the one that is easiest to get wrong by editing
+              the sill of a window without touching its height. */}
+          <Field label="Head" value={formatLength(openingSpan(opening).top, unit)} />
+          <Field
+            label="Ends at"
+            value={formatLength(openingRange(opening).to, unit)}
+          />
+          <Field label="Leaf" value={LEAF_STYLE_LABELS[leafOf(opening).style]} />
+          <OpeningSwing opening={opening} />
+        </div>
+      ) : null}
+
+      {placement && placementItem ? (
+        <div data-testid="placement-properties">
+          <Field label="Item" value={placementItem.name} />
+          <Field
+            label="Size"
+            value={`${formatLength(placementItem.widthMm, unit)} x ${formatLength(
+              placementItem.depthMm,
+              unit,
+            )} x ${formatLength(placementItem.heightMm, unit)}`}
+          />
+          <Field
+            label="Position"
+            value={`${formatLength(placement.position.x, unit)}, ${formatLength(
+              placement.position.y,
+              unit,
+            )}`}
+          />
+          <Field label="Room" value={roomAt(floor, placement.position)?.name ?? 'Unbounded'} />
+          {/* Read back through `resolveElevation` rather than from the stored field:
+              that field is only authoritative for floor and wall mounts, and a
+              surface-mounted item takes its base from whatever it is sitting on. */}
+          <Field label="Base" value={formatLength(resolveElevation(doc, placement), unit)} />
+          <label className="field field--input">
+            <span className="field__label">Mount</span>
+            <select
+              value={placement.mount.kind}
+              aria-label="Mount"
+              onChange={(e) => setMountError(setPlacementMount(placement.id, e.target.value as MountKind))}
+            >
+              <option value="floor">{MOUNT_LABELS.floor}</option>
+              {/* A surface mount names a specific host, which is chosen by dragging
+                  the item onto it — there is nothing sensible to pick from a list.
+                  Shown as the current value, never as a destination. */}
+              <option value="surface" disabled={placement.mount.kind !== 'surface'}>
+                {MOUNT_LABELS.surface}
+              </option>
+              <option value="wall">{MOUNT_LABELS.wall}</option>
+              <option value="ceiling">{MOUNT_LABELS.ceiling}</option>
+            </select>
+          </label>
+          {mountError ? (
+            <p className="panel__warn" role="alert" data-testid="mount-error">
+              {mountError}
+            </p>
+          ) : null}
+          {placement.mount.kind === 'surface' ? (
+            <Field label="Sitting on" value={hostName(doc, floor, placement.mount.hostId)} />
+          ) : null}
+          {placement.mount.kind === 'wall' ? (
+            <Field
+              label="On wall"
+              value={
+                floor.walls.some((w) => placement.mount.kind === 'wall' && w.id === placement.mount.wallId)
+                  ? 'yes'
+                  : 'a wall that is gone'
+              }
+            />
+          ) : null}
+
+          {/* Explicit, per PLAN §11: the plan view shows one floor, so there is
+              nowhere to drag to, and a gesture that silently changed storeys would be
+              indistinguishable from a nudge. */}
+          {doc.floors.length > 1 ? (
+            <label className="field field--input">
+              <span className="field__label">Floor</span>
+              <select
+                value={floor.id}
+                aria-label="Move to floor"
+                data-testid="move-to-floor"
+                onChange={(e) => setMountError(movePlacementToFloor(placement.id, e.target.value))}
+              >
+                {[...orderedFloors(doc)].reverse().map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <div className="panel__row panel__row--rotate">
+            <button
+              type="button"
+              className="btn"
+              aria-label="Rotate left"
+              onClick={() => rotatePlacementBy(placement.id, -ROTATION_STEP_DEG)}
+            >
+              -{ROTATION_STEP_DEG}
+            </button>
+            <span className="field__value" data-testid="placement-rotation">
+              {Math.round(placement.rotation)}&deg;
+            </span>
+            <button
+              type="button"
+              className="btn"
+              aria-label="Rotate right"
+              onClick={() => rotatePlacementBy(placement.id, ROTATION_STEP_DEG)}
+            >
+              +{ROTATION_STEP_DEG}
+            </button>
+          </div>
+
+          {placement.mount.kind === 'wall' ? (
+            <LengthInput
+              label="Height above floor"
+              valueMm={placement.elevation}
+              unit={unit}
+              onCommit={(mm) => setPlacementElevation(placement.id, mm)}
+              testId="placement-elevation"
+            />
+          ) : null}
+
+          {/* How far a pendant hangs below the ceiling. The base is derived from it
+              rather than stored, which is why this edits the drop and the Base field
+              above reads back through `resolveElevation`. */}
+          {placement.mount.kind === 'ceiling' ? (
+            <LengthInput
+              label="Drop below ceiling"
+              valueMm={placement.mount.drop}
+              unit={unit}
+              onCommit={(mm) => setCeilingDrop(placement.id, mm)}
+              testId="placement-drop"
+            />
+          ) : null}
+
+          {placementItem.canHostSurface ? (
+            <p className="panel__note">
+              Other items can sit on this, at{' '}
+              {formatLength(surfaceHeight(placement, placementItem), unit)}.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -98,11 +695,138 @@ export function PropertiesPanel() {
         </button>
       ) : null}
 
+      {background ? (
+        <div data-testid="background-properties">
+          <h2 className="panel__heading">Floor plan</h2>
+
+          {!hasAsset(background.assetId) ? (
+            <p className="panel__warn" data-testid="background-missing">
+              The image for this plan is not loaded. It was probably opened from a
+              file saved without it.
+            </p>
+          ) : null}
+
+          <Field
+            label="Scale"
+            value={
+              isCalibrated(background)
+                ? `${formatLength(backgroundExtentMm(background).width, unit)} wide`
+                : 'Not calibrated'
+            }
+          />
+          <Field label="Source" value={`${background.pixelSize.width} × ${background.pixelSize.height} px`} />
+
+          <label className="field field--input">
+            <span className="field__label">Opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(background.opacity * 100)}
+              aria-label="Background opacity"
+              data-testid="background-opacity"
+              onChange={(e) => setBackgroundOpacity(Number(e.target.value) / 100)}
+            />
+          </label>
+
+          <label className="field field--input">
+            <span className="field__label">Locked</span>
+            <input
+              type="checkbox"
+              checked={background.locked}
+              aria-label="Lock the floor plan in place"
+              data-testid="background-locked"
+              onChange={(e) => setBackgroundLocked(e.target.checked)}
+            />
+          </label>
+
+          <div className="panel__row">
+            <button type="button" className="btn" onClick={() => nudgeBackgroundRotation(-0.5)}>
+              Rotate −0.5°
+            </button>
+            <button type="button" className="btn" onClick={() => nudgeBackgroundRotation(0.5)}>
+              Rotate +0.5°
+            </button>
+          </div>
+
+          <div className="panel__row">
+            <button
+              type="button"
+              className="btn"
+              data-testid="recalibrate"
+              onClick={() => useStore.getState().beginCalibration()}
+            >
+              Recalibrate
+            </button>
+            <button type="button" className="btn btn--danger" onClick={() => removeBackground()}>
+              Remove plan
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <h2 className="panel__heading">Floor</h2>
+      <FloorProperties editable={structureIsEditable(editMode)} />
+
+      <h2 className="panel__heading">Rooms</h2>
+      <RoomDetection editable={structureIsEditable(editMode)} />
+
+      <h2 className="panel__heading">Walkway</h2>
+      <WalkwayReadout unit={unit} />
+
       <h2 className="panel__heading">Validation</h2>
-      <p className="panel__empty">
-        No issues. Overlap, headroom and clearance checks arrive with the inventory in
-        phase 4.
-      </p>
+      {issues.length === 0 ? (
+        <p className="panel__empty" data-testid="no-issues">
+          No issues{doc.floors.length > 1 ? ` on ${floor.name}` : ''}.
+        </p>
+      ) : (
+        <>
+          <p className="panel__count" data-testid="issue-summary">
+            {issues.length === 1 ? '1 issue' : `${issues.length} issues`}
+            {/* Named rather than implied. Every check here — overlaps, headroom,
+                clearance, swing — runs against the active floor, which was a
+                distinction without a difference until there was more than one floor
+                and is now the difference between "no issues" and "none that I
+                looked for". */}
+            {doc.floors.length > 1 ? ` on ${floor.name}` : ''}
+          </p>
+          {/* One list, headed in place.
+
+              Deliberately not one <ul> per group: the panel is read top to bottom as
+              a single ordered worklist, and the headings are signposts along it
+              rather than sections you would ever want to reorder or collapse
+              independently. */}
+          <ul className="issues" data-testid="issue-list">
+            {groupIssues(issues).flatMap((group) => [
+              <li key={`group-${group.label}`} className="issues__group">
+                {group.label}
+                <span className="issues__count">{group.issues.length}</span>
+              </li>,
+              ...group.issues.map((issue, i) => (
+                <li
+                  key={`${group.label}-${i}`}
+                  className="issue"
+                  data-severity={issue.severity}
+                  data-kind={issue.kind}
+                  data-testid={issue.kind === 'uncalibrated' ? 'placement-blocked' : 'issue'}
+                >
+                  {/* Clicking an issue selects what it points at, so the panel is a
+                      way to find the problem rather than only a way to hear about
+                      it. */}
+                  <button
+                    type="button"
+                    className="issue__button"
+                    disabled={issue.refs.length === 0}
+                    onClick={() => selectIssue(issue)}
+                  >
+                    {issue.message}
+                  </button>
+                </li>
+              )),
+            ])}
+          </ul>
+        </>
+      )}
     </aside>
   );
 }

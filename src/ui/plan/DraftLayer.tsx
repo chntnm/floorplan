@@ -4,12 +4,18 @@ import { shapeBoundary, type Draft } from '../../core/tools';
 import { formatLength, type DisplayUnit } from '../../core/units';
 import { docToScreen, flattenToScreen, type Viewport } from '../../core/viewport';
 import type { SnapHint } from '../../core/snapping';
-import type { Measurement } from '../../state/store';
+import type { CalibrationRef, Measurement } from '../../state/store';
+import { isTooNarrow, type WalkwayProbe } from '../../core/walkway';
 import type { PlanTheme } from './theme';
 
 type Props = {
   draft: Draft | null;
   measurement: Measurement | null;
+  /** The committed walkway route, and the narrowest gap found along it. */
+  walkway: readonly Vec2[] | null;
+  probe: WalkwayProbe | null;
+  /** The calibration reference line, drawn while the gate is open. */
+  calibrationRef: CalibrationRef | null;
   snapHints: SnapHint[];
   cursor: Vec2 | null;
   viewport: Viewport;
@@ -64,6 +70,9 @@ function SegmentLabel({
 export function DraftLayer({
   draft,
   measurement,
+  walkway,
+  probe,
+  calibrationRef,
   snapHints,
   cursor,
   viewport,
@@ -159,6 +168,55 @@ export function DraftLayer({
         </>
       ) : null}
 
+      {/* The walkway gesture in flight — the same dashes as a wall chain, in the
+          measurement colour, because it measures rather than builds. */}
+      {draft?.tool === 'walkway' ? (
+        <>
+          <Line
+            points={flattenToScreen(
+              viewport,
+              draft.cursor ? [...draft.points, draft.cursor] : draft.points,
+            )}
+            stroke={theme.dimension}
+            strokeWidth={2}
+            dash={[8, 5]}
+          />
+          {draft.points.map((p, i) => {
+            const s = docToScreen(viewport, p);
+            return <Circle key={i} x={s.x} y={s.y} radius={3.5} fill={theme.dimension} />;
+          })}
+        </>
+      ) : null}
+
+      {/* The committed route, and a tick across it at the narrowest point. The tick
+          is the answer: a number in a panel says 610mm, and this says *where*. */}
+      {walkway && walkway.length > 1 && draft?.tool !== 'walkway' ? (
+        <>
+          <Line
+            points={flattenToScreen(viewport, walkway)}
+            stroke={theme.dimension}
+            strokeWidth={1.5}
+            dash={[8, 5]}
+          />
+          {probe ? (
+            <>
+              <Line
+                points={flattenToScreen(viewport, [probe.left, probe.right])}
+                stroke={isTooNarrow(probe) ? theme.warning : theme.dimension}
+                strokeWidth={2.5}
+              />
+              <SegmentLabel
+                from={probe.left}
+                to={probe.right}
+                viewport={viewport}
+                displayUnit={displayUnit}
+                color={isTooNarrow(probe) ? theme.warning : theme.dimensionText}
+              />
+            </>
+          ) : null}
+        </>
+      ) : null}
+
       {measurement && !draft ? (
         <>
           <Line
@@ -172,6 +230,31 @@ export function DraftLayer({
             viewport={viewport}
             displayUnit={displayUnit}
             color={theme.dimensionText}
+          />
+        </>
+      ) : null}
+
+      {/* The calibration reference. Labelled with what it measures *today*, under the
+          provisional scale — which is exactly the number the gate is about to
+          replace, and seeing it change is how the correction reads as having
+          worked. End caps because the endpoints are what get anchored. */}
+      {calibrationRef ? (
+        <>
+          <Line
+            points={flattenToScreen(viewport, [calibrationRef.a, calibrationRef.b])}
+            stroke={theme.snap}
+            strokeWidth={2.5}
+          />
+          {[calibrationRef.a, calibrationRef.b].map((p, i) => {
+            const s = docToScreen(viewport, p);
+            return <Circle key={i} x={s.x} y={s.y} radius={4} fill={theme.snap} />;
+          })}
+          <SegmentLabel
+            from={calibrationRef.a}
+            to={calibrationRef.b}
+            viewport={viewport}
+            displayUnit={displayUnit}
+            color={theme.snap}
           />
         </>
       ) : null}

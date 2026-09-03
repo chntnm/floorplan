@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createDocument } from '../core/document';
 import { activeFloor, floorBounds, useStore, HISTORY_LIMIT } from './store';
 import {
   addRoomRect,
@@ -350,5 +351,47 @@ describe('zoomToFit', () => {
     const box = floorBounds(floor())!;
     expect(box.minY).toBeCloseTo(-57, 6);
     expect(box.maxY).toBeCloseTo(57, 6);
+  });
+});
+
+describe('the walkway route', () => {
+  const ROUTE = [
+    { x: 0, y: 0 },
+    { x: 3000, y: 0 },
+  ];
+
+  it('survives a tool change, unlike a measurement', () => {
+    // It is a route you work against while moving furniture. A measurement is a
+    // number you just took; losing that on a tool change costs nothing.
+    const store = useStore.getState();
+    store.setWalkway(ROUTE);
+    store.setMeasurement({ from: ROUTE[0]!, to: ROUTE[1]! });
+
+    useStore.getState().setTool('select');
+    expect(useStore.getState().walkway).toEqual(ROUTE);
+    expect(useStore.getState().measurement).toBeNull();
+  });
+
+  it('records no history — it is a question, not an edit', () => {
+    const before = useStore.getState().past.length;
+    useStore.getState().setWalkway(ROUTE);
+    expect(useStore.getState().past).toHaveLength(before);
+    expect(useStore.getState().dirty).toBe(false);
+  });
+
+  it('goes away with the document it was drawn on', () => {
+    useStore.getState().setWalkway(ROUTE);
+    useStore.getState().newDocument();
+    expect(useStore.getState().walkway).toBeNull();
+  });
+
+  it('does not survive opening a file', () => {
+    // A route drawn on one plan means nothing on another, and would draw a line
+    // across a room it was never measured in.
+    useStore.getState().setWalkway(ROUTE);
+    useStore.getState().loadDocument(
+      createDocument({ id: 'other', floorId: 'f2', now: '2026-01-01T00:00:00.000Z' }),
+    );
+    expect(useStore.getState().walkway).toBeNull();
   });
 });

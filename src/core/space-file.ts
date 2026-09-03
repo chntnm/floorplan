@@ -16,7 +16,7 @@ import { unzipSync, zipSync, strToU8, strFromU8 } from 'fflate';
 import { SCHEMA_VERSION, type SpaceDocument } from './document';
 import { migrate } from './migrations';
 
-export const APP_NAME = 'roomplan';
+export const APP_NAME = 'floorplan';
 export const DOCUMENT_ENTRY = 'document.json';
 export const MANIFEST_ENTRY = 'manifest.json';
 export const THUMBNAIL_ENTRY = 'thumbnail.png';
@@ -89,7 +89,7 @@ export function readSpace(bytes: Uint8Array): SpaceBundle {
     entries = unzipSync(bytes);
   } catch (cause) {
     const err = new SpaceFileError(
-      'This file is not a readable .space container (it may be corrupt or not a roomplan file).',
+      'This file is not a readable .space container (it may be corrupt or not a floorplan file).',
     );
     err.cause = cause;
     throw err;

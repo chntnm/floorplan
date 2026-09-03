@@ -1,63 +1,6 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
-
-/**
- * These specs click screen pixels and assert document millimetres, which only works
- * because a fresh document opens at a fixed viewport (see `DEFAULT_VIEWPORT`): scale
- * 0.05 px/mm, document origin at 120,100 inside the stage. Keep the two in step.
- *
- * One screen pixel is 20mm at that scale, so a half-pixel of rounding is 10mm — under
- * half the 25mm snap grid, which is what makes the coordinates below land exactly.
- *
- * The mapping holds for a fresh page only. Opening a file calls `zoomToFit`, and
- * anything that zooms, pans or fits invalidates it — do not click document
- * coordinates after one of those without re-deriving the transform.
- */
-const SCALE = 0.05;
-const ORIGIN = { x: 120, y: 100 };
-
-async function docToPage(stage: Locator, mm: { x: number; y: number }) {
-  const box = await stage.boundingBox();
-  if (!box) throw new Error('plan stage has no bounding box');
-  return {
-    x: box.x + ORIGIN.x + mm.x * SCALE,
-    y: box.y + ORIGIN.y + mm.y * SCALE,
-  };
-}
-
-async function clickAt(page: Page, stage: Locator, mm: { x: number; y: number }) {
-  const p = await docToPage(stage, mm);
-  await page.mouse.click(p.x, p.y);
-}
-
-/**
- * Pick a tool and wait for it to be current.
- *
- * A canvas click sent immediately after the button click can arrive before React has
- * committed the render that makes the structure layer listen — Playwright waits for
- * the DOM click, not for the frame after it. Asserting the pressed state gates on
- * that render without a sleep.
- */
-async function selectTool(page: Page, name: string) {
-  const button = page.getByRole('button', { name, exact: true });
-  await button.click();
-  await expect(button).toHaveAttribute('aria-pressed', 'true');
-}
-
-async function dragBetween(
-  page: Page,
-  stage: Locator,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-) {
-  const a = await docToPage(stage, from);
-  const b = await docToPage(stage, to);
-  await page.mouse.move(a.x, a.y);
-  await page.mouse.down();
-  // Two intermediate moves: one to start the rubber band, one to prove it tracks.
-  await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2);
-  await page.mouse.move(b.x, b.y);
-  await page.mouse.up();
-}
+import { expect, test } from '@playwright/test';
+import { clickAt, docToPage, dragBetween, selectTool } from './coords';
+import { disableSaveInPlace } from './save';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -124,7 +67,7 @@ test.describe('drawing', () => {
 
   test('picks up tools by keyboard shortcut', async ({ page }) => {
     await page.keyboard.press('w');
-    await expect(page.getByRole('button', { name: 'Wall' })).toHaveAttribute(
+    await expect(page.getByRole('button', { name: 'Wall', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
@@ -184,7 +127,7 @@ test.describe('mode toggle', () => {
     await expect(page.getByTestId('count-walls')).toContainText('4');
 
     await page.getByRole('button', { name: 'Arrange furniture' }).click();
-    await expect(page.getByRole('button', { name: 'Wall' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Wall', exact: true })).toBeDisabled();
 
     // A click that would have hit a wall in plan mode selects nothing here.
     await clickAt(page, stage, { x: 2000, y: 0 });
@@ -253,7 +196,7 @@ test.describe('selection', () => {
 
     await selectTool(page, 'Select');
     await clickAt(page, stage, { x: 2000, y: 0 });
-    await page.getByRole('button', { name: 'Delete' }).click();
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
 
     await expect(page.getByTestId('count-walls')).toContainText('3');
     await expect(page.getByTestId('count-rooms')).toContainText('1');
@@ -280,8 +223,15 @@ test.describe('portability', () => {
     await title.fill('Maple Street');
     await title.press('Enter');
 
+    // Headless Chromium has File System Access, so the app would open a picker and
+    // this would wait for a download that never comes. These round-trip tests are
+    // about the container, not about which of the two ways out wrote it — the save
+    // paths themselves are covered in `persistence.spec.ts`.
+    await disableSaveInPlace(page);
+
     const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Save' }).click();
+    // Exact: "Save as…" is also a button, and a substring match takes both.
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe('Maple-Street.space');
 
@@ -301,7 +251,15 @@ test.describe('portability', () => {
   });
 
   test('reports an unreadable file instead of failing silently', async ({ page }) => {
-    page.on('dialog', (d) => void d.accept());
+    // Collected rather than just accepted: asserting the count is unchanged proves
+    // nothing on its own, since it was already zero — the only thing that could fail
+    // it is a dialog left open blocking the page, which reads as a mystery timeout.
+    // What this test is actually about is that the app *said something*.
+    const dialogs: string[] = [];
+    page.on('dialog', (d) => {
+      dialogs.push(d.message());
+      void d.accept();
+    });
 
     await page.getByLabel('Open a .space file').setInputFiles({
       name: 'broken.space',
@@ -309,7 +267,10 @@ test.describe('portability', () => {
       buffer: Buffer.from('this is not a zip'),
     });
 
-    // The document already open is left exactly as it was.
+    await expect.poll(() => dialogs.length).toBe(1);
+    expect(dialogs[0]).toContain('not a readable .space container');
+
+    // And the document already open is left exactly as it was.
     await expect(page.getByTestId('count-walls')).toContainText('0');
   });
 });

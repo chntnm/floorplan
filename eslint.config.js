@@ -12,6 +12,17 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   {
+    // Plain node scripts — the fixture generator. Not part of the bundle and not
+    // typechecked, so they need the node globals the browser config does not give.
+    files: ['**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
+
+  {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2022,

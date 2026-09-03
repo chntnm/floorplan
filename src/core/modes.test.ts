@@ -3,9 +3,13 @@ import {
   EDIT_MODES,
   otherEditMode,
   placementsAreEditable,
+  refIsEditable,
   structureIsEditable,
   type EditMode,
+  type SelectableKind,
 } from './modes';
+
+const KINDS: SelectableKind[] = ['wall', 'room', 'opening', 'placement'];
 
 describe('edit modes', () => {
   it('makes structure and placements mutually exclusive in every mode', () => {
@@ -26,5 +30,14 @@ describe('edit modes', () => {
     const mode: EditMode = 'furnish';
     expect(structureIsEditable(mode)).toBe(false);
     expect(placementsAreEditable(mode)).toBe(true);
+  });
+
+  it('lets exactly one kind be selected in each mode', () => {
+    // Exhaustive over the kinds, which is the point: a door is structure and locks
+    // with the wall it is cut into, in both viewports.
+    for (const kind of KINDS) {
+      expect(refIsEditable('plan', kind)).toBe(kind !== 'placement');
+      expect(refIsEditable('furnish', kind)).toBe(kind === 'placement');
+    }
   });
 });

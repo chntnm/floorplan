@@ -1,11 +1,13 @@
 import { useShallow } from 'zustand/react/shallow';
 import { structureIsEditable } from '../core/modes';
+import { OPENING_KINDS, OPENING_KIND_LABELS } from '../core/openings';
 import {
   PLAN_TOOLS,
   PLAN_TOOL_KEYS,
   PLAN_TOOL_LABELS,
   SHAPE_KINDS,
   SHAPE_KIND_LABELS,
+  type PlanTool,
 } from '../core/tools';
 import { useStore } from '../state/store';
 
@@ -17,16 +19,31 @@ import { useStore } from '../state/store';
  * mode is why.
  */
 export function ToolPalette() {
-  const { tool, shapeKind, editMode, gridEnabled } = useStore(
+  const { tool, shapeKind, openingKind, editMode, gridEnabled, calibrating } = useStore(
     useShallow((s) => ({
       tool: s.tool,
       shapeKind: s.shapeKind,
+      openingKind: s.openingKind,
       editMode: s.editMode,
       gridEnabled: s.gridEnabled,
+      calibrating: s.calibrating,
     })),
   );
 
-  const enabled = structureIsEditable(editMode);
+  // Disabled during the calibration gate as well as in furnish mode: a plan with no
+  // scale produces walls whose lengths mean nothing, and nothing downstream can
+  // correct them afterwards. See PLAN.md §6.1.
+  const enabled = structureIsEditable(editMode) && !calibrating;
+
+  /**
+   * Tools that stay available while structure is locked.
+   *
+   * Select, and the walkway probe — which edits nothing at all, and whose whole
+   * purpose is to be running while you push furniture around. Disabling it in
+   * furnish mode would mean the one question it answers ("can I still get past?")
+   * could only be asked in the mode where you cannot move anything.
+   */
+  const alwaysAvailable = (t: PlanTool) => t === 'select' || t === 'walkway';
 
   return (
     <div className="palette">
@@ -38,7 +55,7 @@ export function ToolPalette() {
             className="seg"
             data-active={t === tool}
             aria-pressed={t === tool}
-            disabled={!enabled && t !== 'select'}
+            disabled={!enabled && (calibrating || !alwaysAvailable(t))}
             title={`${PLAN_TOOL_LABELS[t]} (${PLAN_TOOL_KEYS[t].toUpperCase()})`}
             onClick={() => useStore.getState().setTool(t)}
           >
@@ -46,6 +63,23 @@ export function ToolPalette() {
           </button>
         ))}
       </div>
+
+      {tool === 'opening' && enabled ? (
+        <div className="palette__row" role="group" aria-label="Opening">
+          {OPENING_KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              className="seg seg--small"
+              data-active={k === openingKind}
+              aria-pressed={k === openingKind}
+              onClick={() => useStore.getState().setOpeningKind(k)}
+            >
+              {OPENING_KIND_LABELS[k]}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {tool === 'shape' && enabled ? (
         <div className="palette__row" role="group" aria-label="Shape">

@@ -4,7 +4,7 @@ test.describe('app shell', () => {
   test('boots and renders both panels and the plan editor', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page.getByText('roomplan')).toBeVisible();
+    await expect(page.getByText('floorplan')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Properties' })).toBeVisible();
 
@@ -37,8 +37,13 @@ test.describe('app shell', () => {
 
     await page.getByRole('button', { name: 'Space', exact: true }).click();
 
-    await expect(page.getByText('Space view')).toBeVisible();
-    await expect(page.getByText(/arrow-key traversal/)).toBeVisible();
+    // The 3D chunk is loaded on demand, so the view arrives a moment after the click.
+    await expect(page.getByTestId('space-view')).toBeVisible();
+    await expect(page.getByTestId('hud-help')).toBeVisible();
     await expect(page.getByTestId('plan-stage')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Plan', exact: true }).click();
+    await expect(page.getByTestId('plan-stage')).toBeVisible();
+    await expect(page.getByTestId('space-view')).toHaveCount(0);
   });
 });

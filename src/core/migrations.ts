@@ -56,7 +56,7 @@ export function migrateTo(
     throw new SchemaVersionError(
       typeof found === 'number' ? found : NaN,
       target,
-      'This file is missing a valid schemaVersion and cannot be read as a roomplan space.',
+      'This file is missing a valid schemaVersion and cannot be read as a floorplan space.',
     );
   }
 
@@ -64,7 +64,7 @@ export function migrateTo(
     throw new SchemaVersionError(
       found,
       target,
-      `This space was saved by a newer version of roomplan (schema ${found}; ` +
+      `This space was saved by a newer version of floorplan (schema ${found}; ` +
         `this build supports up to ${target}). Update the app to open it.`,
     );
   }

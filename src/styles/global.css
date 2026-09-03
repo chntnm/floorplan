@@ -193,7 +193,6 @@ body {
 
 .viewport[data-view='space3d'] {
   grid-template-rows: 1fr;
-  place-items: center;
 }
 
 .viewport__placeholder {
@@ -359,4 +358,493 @@ body {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ---------- calibration gate (PLAN.md 6.1) ---------- */
+
+/*
+ * A band across the top of the viewport rather than a modal over the canvas: the
+ * gesture the gate asks for happens *on* the canvas, so covering it would be
+ * self-defeating. Blocking is enforced by disabling the tools, not by a scrim.
+ */
+.gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--accent);
+}
+
+.gate__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  flex: 1 1 320px;
+}
+
+.gate__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.gate__sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.gate__form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gate__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.gate__field input {
+  font: inherit;
+  width: 96px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.gate__ref {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.gate__prompt {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/*
+ * Always in the layout, empty or not. The gate sits directly above the canvas the
+ * user is dragging on, so anything that changes its height mid-gesture moves the
+ * plan under their pointer.
+ */
+.gate__error {
+  margin: 0;
+  flex-basis: 100%;
+  min-height: 16px;
+  font-size: 12px;
+  color: #c0392b;
+}
+
+.gate__error[data-empty='true'] {
+  visibility: hidden;
+}
+
+.gate__ref {
+  min-width: 132px;
+  white-space: nowrap;
+}
+
+.gate__field input:disabled,
+.gate .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gate__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.gate__scale {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.gate .btn {
+  margin-top: 0;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* ---------- PDF page picker ---------- */
+
+.pagepick {
+  position: absolute;
+  z-index: 20;
+  top: calc(var(--topbar-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 22%);
+}
+
+.pagepick__label {
+  font-size: 12px;
+}
+
+.pagepick input {
+  font: inherit;
+  width: 68px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.pagepick .btn {
+  margin-top: 0;
+}
+
+/* ---------- panel additions ---------- */
+
+.panel__warn {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: color-mix(in srgb, #c0392b 12%, transparent);
+  border-left: 2px solid #c0392b;
+  border-radius: 0 4px 4px 0;
+}
+
+.panel__row {
+  display: flex;
+  gap: 8px;
+}
+
+.panel__row .btn {
+  flex: 1 1 0;
+  margin-top: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+/* ---------- inventory (PLAN.md 7) ---------- */
+
+.items {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.item {
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+/* The armed item is the answer to "what am I about to place?", so it has to be
+   visible from the canvas, where the user is actually looking. */
+.item[data-armed='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.item__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.item__name {
+  font-weight: 600;
+}
+
+.item__count {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.item__meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.item__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.item__qty {
+  font: inherit;
+  width: 52px;
+  margin-left: auto;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.itemform {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.field__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 56px;
+  text-align: right;
+}
+
+.panel__note {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.panel__row--rotate {
+  align-items: center;
+}
+
+.panel__row--rotate .field__value {
+  flex: 1 1 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- validation ---------- */
+
+.issues__group {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 8px 0 2px;
+}
+
+.issues__group:first-child {
+  margin-top: 0;
+}
+
+.issues__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.seg--select {
+  min-width: 0;
+  max-width: 140px;
+}
+
+.panel__count {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.issues {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.issue__button {
+  appearance: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 7px 9px;
+  border: 0;
+  border-left: 2px solid var(--text-dim);
+  border-radius: 0 4px 4px 0;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.issue__button:disabled {
+  cursor: default;
+}
+
+.issue[data-severity='warning'] .issue__button {
+  border-left-color: #d08a2c;
+}
+
+.issue[data-severity='blocking'] .issue__button {
+  border-left-color: #c0392b;
+}
+
+/* ---------- space view ---------- */
+
+.space {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The canvas fills its cell and is allowed to shrink; without `min-height: 0` a
+   grid item refuses to go below its content size and the canvas grows forever
+   on every resize. */
+.space__canvas {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface-2);
+  touch-action: none;
+}
+
+.space__canvas canvas {
+  display: block;
+  outline: none;
+}
+
+.space[data-mode='walk'] .space__canvas,
+.space[data-mode='fly'] .space__canvas {
+  cursor: grab;
+}
+
+.hud {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.hud__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hud__row--readout {
+  color: var(--text-dim);
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud__row--views input {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  min-width: 120px;
+}
+
+.hud__view {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.hud__help {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+/* ---------- recovery banner ---------- */
+
+.recovery {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.recovery__text {
+  flex: 1;
+  color: var(--text);
+}
+
+/* ---------- drag-and-drop overlay ---------- */
+
+.dropzone {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  /* Feedback, never a hit area — a drop landing on the overlay instead of the
+     window is the one way this feature breaks itself. */
+  pointer-events: none;
+}
+
+.dropzone__label {
+  padding: 14px 22px;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* ---------- product URL lookup ---------- */
+
+.lookup {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.lookup__source,
+.lookup__evidence {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.item__flag {
+  color: var(--text-dim);
+  font-style: italic;
 }

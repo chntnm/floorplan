@@ -15,23 +15,43 @@ import { PLAN_TOOL_KEYS, PLAN_TOOLS, type PlanTool } from '../../core/tools';
 import { panBy, pxToMm, screenToDoc, zoomAt } from '../../core/viewport';
 import { activeFloor, documentGridMm, useStore, type SelectionRef } from '../../state/store';
 import {
+  addOpening,
+  addPlacement,
   addRoomRect,
   addShapeRoom,
   addWallChain,
+  commitPlacementTransform,
   commitWallTransform,
   deleteSelection,
+  placementSnapContext,
+  previewPlacementTransform,
   previewWallTransform,
+  rotatePlacementBy,
 } from '../../state/actions';
+import { PlacementBlockedError } from '../../core/calibration';
+import { OpeningError } from '../../core/openings';
+import { flaggedPlacements, validateFloor } from '../../core/validation';
+import { ROTATION_STEP_DEG, snapPlacement } from '../../core/placement-snap';
+import { BackgroundLayer } from './BackgroundLayer';
 import { DraftLayer } from './DraftLayer';
+import { floorBelow } from '../../core/floors';
+import { GhostLayer } from './GhostLayer';
 import { GridLayer } from './GridLayer';
 import { PlacementLayer } from './PlacementLayer';
 import { StructureLayer } from './StructureLayer';
 import { usePlanTheme } from './theme';
+import { useWalkwayProbe } from '../useWalkwayProbe';
 
 /** Wheel notch → zoom factor. 1.0015^deltaY tracks a trackpad as smoothly as a mouse. */
 const ZOOM_SENSITIVITY = 1.0015;
 
-const DRAW_TOOLS: ReadonlySet<PlanTool> = new Set<PlanTool>(['wall', 'room', 'shape', 'dimension']);
+const DRAW_TOOLS: ReadonlySet<PlanTool> = new Set<PlanTool>([
+  'wall',
+  'room',
+  'shape',
+  'dimension',
+  'walkway',
+]);
 
 /**
  * How close two consecutive clicks must be, in screen pixels, to read as "click the
@@ -63,7 +83,10 @@ export function PlanStage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const pan = useRef<{ active: boolean; x: number; y: number }>({ active: false, x: 0, y: 0 });
   const lastClickPx = useRef<{ x: number; y: number } | null>(null);
+  const calDrag = useRef(false);
   const theme = usePlanTheme();
+  // Derived from the document, not stored: move the sofa and the gap moves with it.
+  const { path, probe } = useWalkwayProbe();
 
   const {
     doc,
@@ -77,6 +100,10 @@ export function PlanStage() {
     selection,
     measurement,
     transform,
+    calibrating,
+    calibrationRef,
+    placementTransform,
+    placingItemId,
   } = useStore(
     useShallow((s) => ({
       doc: s.doc,
@@ -90,6 +117,10 @@ export function PlanStage() {
       selection: s.selection,
       measurement: s.measurement,
       transform: s.transform,
+      calibrating: s.calibrating,
+      calibrationRef: s.calibrationRef,
+      placementTransform: s.placementTransform,
+      placingItemId: s.placingItemId,
     })),
   );
 
@@ -114,6 +145,10 @@ export function PlanStage() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // The validation pass is the only thing here that walks every placement against
+  // every other, so it is memoized on the document rather than run per render.
+  const flagged = useMemo(() => flaggedPlacements(validateFloor(doc, floor)), [doc, floor]);
 
   // ---- snapping ----------------------------------------------------------
   const snapCandidates = useMemo(() => {
@@ -149,7 +184,9 @@ export function PlanStage() {
       // loop only works when the final click happens to land in the same grid cell
       // as the start — and never at all with the grid off or Alt held.
       const inFlight =
-        state.draft?.tool === 'wall' ? [...snapCandidates, ...state.draft.points] : snapCandidates;
+        state.draft?.tool === 'wall' || state.draft?.tool === 'walkway'
+          ? [...snapCandidates, ...state.draft.points]
+          : snapCandidates;
 
       const ctx: SnapContext = {
         gridMm: documentGridMm(state.doc),
@@ -183,6 +220,116 @@ export function PlanStage() {
     });
   };
 
+  /** The raw (unsnapped) document point under the pointer. */
+  const rawAt = (stage: Konva.Stage): Vec2 | null => {
+    const pos = stage.getPointerPosition();
+    return pos ? screenToDoc(useStore.getState().viewport, pos) : null;
+  };
+
+  /** The snap context for whichever item a placement gesture concerns. */
+  const snapCtxFor = (itemId: string, excludePlacementId?: string) =>
+    placementSnapContext(itemId, {
+      toleranceMm: pxToMm(useStore.getState().viewport, DEFAULT_SNAP_TOLERANCE_PX),
+      ...(excludePlacementId ? { excludePlacementId } : {}),
+    });
+
+  /** Begin a placement drag. The document is untouched until the pointer is released. */
+  const beginPlacementTransform = (placementId: string, mode: 'move' | 'rotate') => {
+    const state = useStore.getState();
+    const placement = activeFloor(state).placements.find((p) => p.id === placementId);
+    const grab = state.cursor;
+    if (!placement || !grab) return;
+    // A placement whose item is gone has no footprint to snap with, and its snap
+    // context would come back null — which would quietly ignore Alt for the whole
+    // drag. It also has nothing rendered to grab, so this is belt and braces; stating
+    // it here keeps that a rule rather than a coincidence.
+    if (!snapCtxFor(placement.itemId, placement.id)) return;
+
+    state.setPlacementTransform({
+      placementId,
+      mode,
+      grab,
+      origin: {
+        position: placement.position,
+        rotation: placement.rotation,
+        mount: placement.mount,
+      },
+      position: placement.position,
+      rotation: placement.rotation,
+      mount: placement.mount,
+      hints: [],
+    });
+  };
+
+  /**
+   * Drop the armed item where the pointer is.
+   *
+   * The gate is enforced here rather than in the UI so it cannot be routed around:
+   * `addPlacement` throws, and the message it throws is the same sentence the
+   * validation panel shows.
+   */
+  const dropArmedItem = (stage: Konva.Stage) => {
+    const state = useStore.getState();
+    const itemId = state.placingItemId;
+    if (!itemId) return;
+
+    const raw = rawAt(stage);
+    if (!raw) return;
+
+    const ctx = snapCtxFor(itemId);
+    const snapped = ctx ? snapPlacement(raw, 0, ctx) : null;
+
+    try {
+      const placement = addPlacement(itemId, snapped?.position ?? raw, {
+        rotation: snapped?.rotation ?? 0,
+        // Only a mount the *gesture* actually determined — the snap finding a host to
+        // stand on. A wall snap seats the item against the wall but leaves it on the
+        // floor, and passing that `{ kind: 'floor' }` through would override the
+        // item's own default and quietly ground every wall-mounted shelf.
+        ...(snapped && snapped.mount.kind !== 'floor' ? { mount: snapped.mount } : {}),
+      });
+      if (placement) state.setSelection([{ kind: 'placement', id: placement.id }]);
+    } catch (err) {
+      if (err instanceof PlacementBlockedError) {
+        window.alert(err.message);
+        state.setPlacingItem(null);
+        return;
+      }
+      throw err;
+    }
+  };
+
+  /**
+   * Put an opening in the wall under the pointer.
+   *
+   * Deliberately uses the *raw* point rather than the snapped one. Grid snapping
+   * moves a click by up to half a cell, which is enough to push it off a 114mm wall
+   * entirely — and the position along the wall is decided by projection onto the
+   * centreline anyway, so the grid has nothing useful to contribute here.
+   */
+  const dropOpening = (stage: Konva.Stage) => {
+    const state = useStore.getState();
+    const raw = rawAt(stage);
+    if (!raw) return;
+
+    try {
+      const opening = addOpening(
+        raw,
+        state.openingKind,
+        pxToMm(state.viewport, DEFAULT_SNAP_TOLERANCE_PX),
+      );
+      if (opening) state.setSelection([{ kind: 'opening', id: opening.id }]);
+    } catch (err) {
+      // A wall too short to hold the opening. The message names the sizes, and the
+      // document is untouched — `createOpening` throws before the mutation.
+      if (err instanceof OpeningError) {
+        window.alert(err.message);
+        return;
+      }
+      throw err;
+    }
+  };
+
   // ---- pointer -----------------------------------------------------------
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = e.target.getStage();
@@ -192,6 +339,34 @@ export function PlanStage() {
     const { tool, draft, shapeKind } = useStore.getState();
     const middle = e.evt.button === 1;
     const onEmptyCanvas = e.target === stage;
+
+    // The gate takes the whole stage. Snapping is deliberately off for this drag:
+    // the reference has to land on the feature in the raster the user is pointing
+    // at, and quantising it to the grid quantises the scale that comes out of it.
+    if (useStore.getState().calibrating && !middle) {
+      if (e.evt.button !== 0) return;
+      const pos = stage.getPointerPosition();
+      if (!pos) return;
+      const at = screenToDoc(useStore.getState().viewport, pos);
+      calDrag.current = true;
+      useStore.getState().setCalibrationRef({ a: at, b: at });
+      return;
+    }
+
+    // An armed item drops on the next left click anywhere on the canvas. Checked
+    // before the pan branch, because a click on empty canvas with Select is
+    // otherwise read as the start of a pan.
+    if (e.evt.button === 0 && useStore.getState().placingItemId) {
+      dropArmedItem(stage);
+      return;
+    }
+
+    // An opening is a single click on a wall rather than a draft, so it is handled
+    // before the draw-tool switch below. A click that lands on no wall does nothing.
+    if (e.evt.button === 0 && tool === 'opening') {
+      dropOpening(stage);
+      return;
+    }
 
     // Middle-drag always pans; so does a left-drag on empty canvas with Select, which
     // is the gesture most people reach for before finding a pan key.
@@ -253,9 +428,48 @@ export function PlanStage() {
         store.setMeasurement(null);
         store.setDraft({ tool: 'dimension', start: p, cursor: p });
         return;
+      case 'walkway': {
+        // Click-to-place, exactly like the wall chain — the same gesture, because it
+        // is the same shape of thing and learning two would be one too many. It
+        // commits to editor state rather than to the document: a route through the
+        // room is a question you ask of the plan, not part of it.
+        const pos = stage.getPointerPosition();
+        const previous = lastClickPx.current;
+        if (pos) lastClickPx.current = { x: pos.x, y: pos.y };
+
+        if (!draft || draft.tool !== 'walkway') {
+          store.setWalkway(null);
+          store.setDraft({ tool: 'walkway', points: [p], cursor: p });
+          return;
+        }
+
+        const repeated =
+          pos && previous && Math.hypot(pos.x - previous.x, pos.y - previous.y) <= REPEAT_CLICK_PX;
+        if (repeated) {
+          finishWalkway(draft.points);
+          return;
+        }
+
+        store.setDraft({ tool: 'walkway', points: [...draft.points, p], cursor: p });
+        return;
+      }
       default:
         return;
     }
+  };
+
+  /**
+   * End the walkway gesture, keeping the path only if there is a path.
+   *
+   * A single click and a stray Enter both land here, and a one-point route has no
+   * width to measure — clearing is better than leaving a dot on the plan that
+   * reports nothing.
+   */
+  const finishWalkway = (points: Vec2[]) => {
+    const store = useStore.getState();
+    store.setWalkway(points.length >= 2 ? points : null);
+    store.setDraft(null);
+    lastClickPx.current = null;
   };
 
   const onMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -271,6 +485,26 @@ export function PlanStage() {
     }
 
     const store = useStore.getState();
+
+    if (calDrag.current) {
+      const pos = stage.getPointerPosition();
+      const ref = store.calibrationRef;
+      if (pos && ref) store.setCalibrationRef({ a: ref.a, b: screenToDoc(store.viewport, pos) });
+      return;
+    }
+    if (store.calibrating) return;
+
+    const moving = store.placementTransform;
+    if (moving) {
+      const raw = rawAt(stage);
+      if (!raw) return;
+      const placement = activeFloor(store).placements.find((p) => p.id === moving.placementId);
+      const ctx = placement ? snapCtxFor(placement.itemId, placement.id) : null;
+      store.setCursor(raw);
+      store.setPlacementTransform(previewPlacementTransform(moving, raw, ctx));
+      return;
+    }
+
     const dragging = store.transform;
     const snapped = snapAt(stage, dragging && dragging.end !== 'both' ? undefined : draftAnchor());
     if (!snapped) return;
@@ -297,6 +531,23 @@ export function PlanStage() {
     }
 
     const store = useStore.getState();
+
+    if (calDrag.current) {
+      calDrag.current = false;
+      // A click without a drag is not a reference line; drop it so the gate keeps
+      // asking rather than accepting a zero-length one it would only reject later.
+      const ref = store.calibrationRef;
+      if (ref && ref.a.x === ref.b.x && ref.a.y === ref.b.y) store.setCalibrationRef(null);
+      return;
+    }
+    if (store.calibrating) return;
+
+    const moving = store.placementTransform;
+    if (moving) {
+      commitPlacementTransform(moving);
+      store.setPlacementTransform(null);
+      return;
+    }
 
     const dragging = store.transform;
     if (dragging) {
@@ -354,6 +605,14 @@ export function PlanStage() {
       if (isTypingTarget(e.target)) return;
       const store = useStore.getState();
 
+      // The gate is blocking, so the shortcuts are too. Undoing past an import while
+      // the gate is open would leave it prompting for a background that is gone, and
+      // a tool key would arm a tool the palette is showing as unavailable.
+      if (store.calibrating) {
+        if (e.key === 'Escape') store.setCalibrationRef(null);
+        return;
+      }
+
       if (e.key === 'Alt') {
         store.setSnapSuppressed(true);
         return;
@@ -376,8 +635,21 @@ export function PlanStage() {
       if (e.key === 'Escape') {
         store.setDraft(null);
         store.setTransform(null);
+        store.setPlacementTransform(null);
+        store.setPlacingItem(null);
         store.clearSelection();
         lastClickPx.current = null;
+        return;
+      }
+      // Rotating from the keyboard, because the handle is a fine gesture and a poor
+      // way to hit exactly 90°.
+      if (e.key === '[' || e.key === ']') {
+        const selected = store.selection.filter((s) => s.kind === 'placement');
+        if (selected.length > 0) {
+          e.preventDefault();
+          const step = e.key === ']' ? ROTATION_STEP_DEG : -ROTATION_STEP_DEG;
+          for (const ref of selected) rotatePlacementBy(ref.id, step);
+        }
         return;
       }
       if (e.key === 'Enter') {
@@ -386,6 +658,7 @@ export function PlanStage() {
           addWallChain(current.points);
           store.setDraft(null);
         }
+        if (current?.tool === 'walkway') finishWalkway(current.points);
         lastClickPx.current = null;
         return;
       }
@@ -420,8 +693,18 @@ export function PlanStage() {
   }, []);
 
   // ---- render ------------------------------------------------------------
-  const structureInteractive = structureIsEditable(editMode) && tool === 'select';
-  const placementsInteractive = placementsAreEditable(editMode);
+  // Mode drives `listening`, which is the layer toggle from the brief. The tool
+  // drives `selectable`, which the shape handlers read — because flipping
+  // `listening` only takes effect on Konva's next draw, and a click that arrives in
+  // the same frame lands on a layer that is still deaf.
+  const structureInteractive = structureIsEditable(editMode) && !calibrating;
+  const structureSelectable = structureInteractive && tool === 'select';
+  const placementsInteractive = placementsAreEditable(editMode) && !calibrating;
+  // The background only accepts a drag when it has been deliberately unlocked, and
+  // never while the gate is open — dragging the plan out from under the reference
+  // line you are drawing on it is not a gesture anyone means.
+  const backgroundInteractive =
+    structureSelectable && floor.background?.locked === false;
 
   const onSelect = (ref: SelectionRef, additive: boolean) => {
     const store = useStore.getState();
@@ -433,7 +716,7 @@ export function PlanStage() {
     <div
       ref={containerRef}
       className="planstage"
-      data-cursor={DRAW_TOOLS.has(tool) ? 'draw' : 'select'}
+      data-cursor={calibrating || placingItemId || DRAW_TOOLS.has(tool) ? 'draw' : 'select'}
       data-testid="plan-stage"
     >
       <Stage
@@ -452,11 +735,21 @@ export function PlanStage() {
             commitWallTransform(store.transform);
             store.setTransform(null);
           }
+          if (store.placementTransform) {
+            commitPlacementTransform(store.placementTransform);
+            store.setPlacementTransform(null);
+          }
           store.setCursor(null);
         }}
         onWheel={onWheel}
         onContextMenu={(e) => e.evt.preventDefault()}
       >
+        <BackgroundLayer
+          background={floor.background}
+          viewport={viewport}
+          interactive={backgroundInteractive}
+        />
+
         <GridLayer
           viewport={viewport}
           size={stageSize}
@@ -471,6 +764,9 @@ export function PlanStage() {
           <Rect x={0} y={0} width={stageSize.width} height={stageSize.height} />
         </Layer>
 
+        {/* Under the active floor, and out of the hit graph entirely. */}
+        <GhostLayer floor={floorBelow(doc, doc.activeFloorId)} viewport={viewport} theme={theme} />
+
         <StructureLayer
           floor={floor}
           viewport={viewport}
@@ -478,6 +774,7 @@ export function PlanStage() {
           displayUnit={doc.displayUnit}
           selection={selection}
           interactive={structureInteractive}
+          selectable={structureSelectable}
           transform={transform}
           onSelect={onSelect}
           onGrabWall={(wallId) => beginTransform(wallId, 'both')}
@@ -491,12 +788,22 @@ export function PlanStage() {
           theme={theme}
           selection={selection}
           interactive={placementsInteractive}
+          // Same rule as the structure layer: only the Select tool selects. With the
+          // walkway armed a click on the sofa belongs to the route being drawn, and
+          // a selectable layer would swallow it.
+          selectable={placementsInteractive && !placingItemId && tool === 'select'}
+          transform={placementTransform}
+          flagged={flagged}
           onSelect={onSelect}
+          onGrab={beginPlacementTransform}
         />
 
         <DraftLayer
           draft={draft}
           measurement={measurement}
+          walkway={path}
+          probe={probe}
+          calibrationRef={calibrationRef}
           snapHints={snapHints}
           cursor={cursor}
           viewport={viewport}

@@ -39,3 +39,20 @@ export function placementsAreEditable(mode: EditMode): boolean {
 export function otherEditMode(mode: EditMode): EditMode {
   return mode === 'plan' ? 'furnish' : 'plan';
 }
+
+/** Everything a click can land on, in either viewport. */
+export type SelectableKind = 'wall' | 'room' | 'opening' | 'placement';
+
+/**
+ * Whether a click on a thing of this kind may select it, in this mode.
+ *
+ * Written as *placement or else structure* rather than as a check per kind, so a
+ * kind added later is locked with the structure it belongs to instead of falling
+ * through both branches and quietly becoming selectable everywhere. That is not
+ * hypothetical: `opening` was added to the 3D scene's refs in phase 6, and a
+ * two-branch guard would have let a door be selected — and deleted — in furnish
+ * mode, where the plan view refuses to let you touch it.
+ */
+export function refIsEditable(mode: EditMode, kind: SelectableKind): boolean {
+  return kind === 'placement' ? placementsAreEditable(mode) : structureIsEditable(mode);
+}

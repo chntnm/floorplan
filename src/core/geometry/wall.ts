@@ -14,7 +14,11 @@
  */
 
 import { polygon, ensureCounterClockwise, type Polygon } from './polygon';
-import { distance, normalize, perp, sub, type Vec2 } from './vec';
+import { distance, distanceToSegment, normalize, perp, sub, type Vec2 } from './vec';
+
+// Re-exported because it was part of this module's surface before the walker needed
+// it too, and callers should not have to care that it moved down a layer.
+export { distanceToSegment };
 
 export type WallLine = {
   a: Vec2;
@@ -69,17 +73,6 @@ export function wallOutline(wall: WallLine): Polygon {
   );
 }
 
-/** Perpendicular distance from a point to a segment (not the infinite line). */
-export function distanceToSegment(p: Vec2, a: Vec2, b: Vec2): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return distance(p, a);
-
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
-  return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
-}
-
 /**
  * How far along the centreline a point falls, in mm from `a`, clamped to the wall.
  * This is the coordinate `Opening.offsetMm` is expressed in.
@@ -102,6 +95,31 @@ export function projectOntoWall(wall: WallLine, p: Vec2): number {
  */
 export function hitsWall(wall: WallLine, p: Vec2, toleranceMm: number): boolean {
   return distanceToSegment(p, wall.a, wall.b) <= wall.thicknessMm / 2 + toleranceMm;
+}
+
+/**
+ * The wall whose body is under a point, nearest first.
+ *
+ * Nearest rather than first-match: walls overlap at every corner (joins are butt
+ * joins, so there is a small overlap on the inside of each), and clicking a corner
+ * should address the wall you are pointing at rather than whichever was drawn first.
+ */
+export function nearestWall<T extends WallLine>(
+  walls: readonly T[],
+  p: Vec2,
+  toleranceMm: number,
+): T | undefined {
+  let best: T | undefined;
+  let bestDistance = Infinity;
+  for (const wall of walls) {
+    if (isDegenerate(wall)) continue;
+    const d = distanceToSegment(p, wall.a, wall.b);
+    if (d <= wall.thicknessMm / 2 + toleranceMm && d < bestDistance) {
+      best = wall;
+      bestDistance = d;
+    }
+  }
+  return best;
 }
 
 /** Every distinct endpoint across a set of walls — the candidate set for snapping. */

@@ -118,6 +118,7 @@ function fixture(): SpaceDocument {
   floor.background = {
     assetId: 'asset-bg',
     pageIndex: 0,
+    pixelSize: { width: 1600, height: 1200 },
     calibration: {
       refA: { x: 100, y: 100 },
       refB: { x: 500, y: 100 },
@@ -160,7 +161,7 @@ describe('.space container', () => {
     const bytes = writeSpace({ document: fixture(), assets: {} }, '0.1.0');
     const manifest = JSON.parse(strFromU8(unzipSync(bytes)[MANIFEST_ENTRY]!));
     expect(manifest).toMatchObject({
-      app: 'roomplan',
+      app: 'floorplan',
       appVersion: '0.1.0',
       schemaVersion: SCHEMA_VERSION,
       title: 'Test Apartment',
