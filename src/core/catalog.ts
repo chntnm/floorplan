@@ -15,7 +15,14 @@
  * Pure — no DOM, no store.
  */
 
-import type { Category, CatalogItem, ClearanceZone, Id, MountKind } from './document';
+import type {
+  Category,
+  CatalogItem,
+  ClearanceZone,
+  Id,
+  MountKind,
+  ProductSource,
+} from './document';
 import { makeFootprint, type Footprint } from './geometry/footprint';
 import type { FootprintGenerator } from './geometry/generators';
 import type { ShapeKind } from './tools';
@@ -97,6 +104,8 @@ export type ItemDraft = {
   color?: string;
   quantityOwned?: number;
   notes?: string;
+  /** Where the numbers came from, when they were not typed. See PLAN.md §7.2. */
+  source?: ProductSource;
 };
 
 /**
@@ -199,6 +208,7 @@ export function createCatalogItem(draft: ItemDraft, id: Id): CatalogItem {
     color: draft.color ?? defaults.color,
     quantityOwned,
     ...(draft.notes ? { notes: draft.notes } : {}),
+    ...(draft.source ? { source: { ...draft.source } } : {}),
   };
 }
 
@@ -212,6 +222,9 @@ export function draftFromItem(item: CatalogItem, shape: ShapeKind = 'rect'): Ite
     heightMm: item.heightMm,
     shape: generatorShape(item.footprint.generator) ?? shape,
     voidBelowMm: item.voidBelowMm,
+    // Carried back, or editing the height of an imported item would quietly erase the
+    // record of where its width came from.
+    ...(item.source ? { source: { ...item.source } } : {}),
     ...(item.surfaceHeightMm !== undefined ? { surfaceHeightMm: item.surfaceHeightMm } : {}),
     canHostSurface: item.canHostSurface,
     defaultMount: item.defaultMount,

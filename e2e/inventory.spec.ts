@@ -111,6 +111,24 @@ test.describe('the catalog', () => {
     await expect(page.getByTestId('item-list')).toContainText('Reading chair');
   });
 
+  test('does not resize an item that was opened and saved unchanged', async ({ page }) => {
+    // The form holds lengths as text and parses them in the document's display unit,
+    // where a bare number means inches. Prefilling `String(item.widthMm)` therefore
+    // re-read a 762mm armchair as 762 inches on save — an edit that only changed the
+    // name multiplied every dimension by 25.4, and nothing in the flow said so.
+    await addPreset(page, 'Seating — Armchair');
+    const before = await page.getByTestId('item-list').innerText();
+
+    await page.getByRole('button', { name: 'Edit Armchair' }).click();
+    await page.getByTestId('item-form').getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByTestId('item-form')).toBeHidden();
+
+    // innerText on both sides: `toHaveText` normalises the list's line breaks away,
+    // and comparing a normalised value against a raw one fails on whitespace while
+    // saying nothing about the dimensions.
+    expect(await page.getByTestId('item-list').innerText()).toBe(before);
+  });
+
   test('removes an item together with everything placed from it', async ({ page }) => {
     await addPreset(page, 'Seating — Dining chair');
     await armFirstItem(page);

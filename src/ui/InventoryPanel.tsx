@@ -13,6 +13,9 @@ import {
   updateCatalogItem,
 } from '../state/actions';
 import { ItemForm } from './ItemForm';
+import { NO_ENDPOINT_MESSAGE, lookUpProduct } from './product-lookup';
+import { evidenceFor, itemDraftFrom, sourceFor } from '../core/product-import';
+import type { ProductDraft } from '../core/product';
 
 /**
  * The inventory (PLAN.md §7).
@@ -39,6 +42,12 @@ export function InventoryPanel() {
   const [editingId, setEditingId] = useState<Id | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // URL import (PLAN.md §7.2). `pendingUrl` is the form; `found` is what came back and
+  // is what turns the item form into a confirm-before-add dialog.
+  const [urlEntry, setUrlEntry] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [found, setFound] = useState<{ url: string; draft: ProductDraft } | null>(null);
+
   const floor = activeFloor({ doc });
   const unit = doc.displayUnit;
   const blocked = placementBlockReason(floor);
@@ -59,6 +68,39 @@ export function InventoryPanel() {
       addCatalogItem(draft);
       setAdding(false);
     });
+
+  /**
+   * Confirm a looked-up product.
+   *
+   * The source is attached here rather than in the form, because whether the item
+   * counts as `parsed` or `confirmed` depends on what the user did to the numbers
+   * between the lookup and this call — which is exactly the thing the form does not
+   * know and this component does.
+   */
+  const onConfirmFound = (draft: ItemDraft) =>
+    guarded(() => {
+      if (!found) return;
+      addCatalogItem({ ...draft, source: sourceFor({ url: found.url, scraped: found.draft, submitted: draft }) });
+      setFound(null);
+      setUrlEntry(null);
+    });
+
+  const onLookUp = async (url: string) => {
+    setLookingUp(true);
+    setError(null);
+    try {
+      const outcome = await lookUpProduct(url);
+      if (outcome.kind === 'ok') {
+        setFound({ url: outcome.url, draft: outcome.draft });
+        return;
+      }
+      // "Unavailable" is not a failure to report as one — it is the stated
+      // degradation, and the message says what to do instead.
+      setError(outcome.kind === 'unavailable' ? NO_ENDPOINT_MESSAGE : outcome.message);
+    } finally {
+      setLookingUp(false);
+    }
+  };
 
   const onEdit = (draft: ItemDraft) =>
     guarded(() => {
@@ -135,6 +177,19 @@ export function InventoryPanel() {
                     {CATEGORY_LABELS[item.category]} ·{' '}
                     {formatLength(item.widthMm, unit)} × {formatLength(item.depthMm, unit)} ×{' '}
                     {formatLength(item.heightMm, unit)}
+                    {/* PLAN.md §7.2: an item still carrying a measurement nobody
+                        checked. Shown here rather than only in the file, because the
+                        moment it matters is when something does not fit and you are
+                        looking down this list wondering which number to doubt. */}
+                    {item.source?.confidence === 'parsed' ? (
+                      <span
+                        className="item__flag"
+                        data-testid={`unverified-${item.id}`}
+                        title={`Read from ${item.source.url} and not checked`}
+                      >
+                        {' '}· unverified
+                      </span>
+                    ) : null}
                   </div>
                   <div className="item__actions">
                     {/* Disabled rather than allowed-and-refused: the gate is going
@@ -192,8 +247,65 @@ export function InventoryPanel() {
           onSubmit={onEdit}
           onCancel={() => setEditingId(null)}
         />
+      ) : found ? (
+        /* The confirm-before-add dialog (§7.2). It is the ordinary item form, with
+           every field editable, plus the URL and the text the numbers were read
+           from — a scraped dimension a person cannot check against the page is one
+           they have to take on trust. */
+        <div className="lookup" data-testid="lookup-confirm">
+          <p className="lookup__source">
+            From <span data-testid="lookup-url">{found.url}</span>
+          </p>
+          {evidenceFor(found.draft) ? (
+            <p className="lookup__evidence" data-testid="lookup-evidence">
+              {evidenceFor(found.draft)}
+            </p>
+          ) : (
+            <p className="lookup__evidence" data-testid="lookup-evidence">
+              That page did not state any dimensions — they need typing in.
+            </p>
+          )}
+          <ItemForm
+            unit={unit}
+            initial={itemDraftFrom(found.draft)}
+            submitLabel="Add"
+            onSubmit={onConfirmFound}
+            onCancel={() => {
+              setFound(null);
+              setUrlEntry(null);
+            }}
+          />
+        </div>
       ) : adding ? (
         <ItemForm unit={unit} submitLabel="Add" onSubmit={onAdd} onCancel={() => setAdding(false)} />
+      ) : urlEntry !== null ? (
+        <div className="panel__row" data-testid="lookup-form">
+          <input
+            className="field__input"
+            type="url"
+            value={urlEntry}
+            aria-label="Product page URL"
+            data-testid="lookup-url-input"
+            placeholder="https://…"
+            onChange={(e) => setUrlEntry(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && urlEntry.trim()) void onLookUp(urlEntry.trim());
+              if (e.key === 'Escape') setUrlEntry(null);
+            }}
+          />
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={lookingUp || !urlEntry.trim()}
+            data-testid="lookup-go"
+            onClick={() => void onLookUp(urlEntry.trim())}
+          >
+            {lookingUp ? 'Looking…' : 'Look up'}
+          </button>
+          <button type="button" className="btn" onClick={() => setUrlEntry(null)}>
+            Cancel
+          </button>
+        </div>
       ) : (
         <div className="panel__row">
           <button
@@ -203,6 +315,18 @@ export function InventoryPanel() {
             onClick={() => setAdding(true)}
           >
             Add item
+          </button>
+          <button
+            type="button"
+            className="btn"
+            data-testid="add-from-url"
+            title="Read a product page for its name and dimensions"
+            onClick={() => {
+              setError(null);
+              setUrlEntry('');
+            }}
+          >
+            From a URL
           </button>
         </div>
       )}

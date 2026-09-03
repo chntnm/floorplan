@@ -1,8 +1,8 @@
 # floorplan — Implementation Plan
 
 **Location:** `Development/conquerorchin/floorplan/`
-**Status:** Planning — nothing built yet
-**Date:** 2026-09-01
+**Status:** Phases 0-9 built; see the phasing table in §12
+**Date:** 2026-09-03
 
 ---
 
@@ -557,14 +557,53 @@ Width: 84 in                →  labeled rows in a spec table
 
 **The result always lands in a confirm-before-add dialog** with every field editable,
 the source URL shown, and the raw text snippet the numbers came from displayed
-alongside. A scraped dimension never becomes geometry unconfirmed. Confidence is stored
-on the item (`parsed` vs `confirmed`) and parsed-but-unconfirmed items are flagged in
-the inventory list.
+alongside. A scraped dimension never becomes geometry unconfirmed.
 
-Deployment: Vite dev middleware in development, one serverless function in production.
-**The app remains fully functional as a static build with the endpoint absent** — URL
-import degrades to a message pointing at manual entry. This is a convenience layer, not
-a dependency.
+Name, image and price come from the first tier that has them; **dimensions are tracked
+separately**, because they are the only part that becomes geometry. A page can publish
+a clean JSON-LD name and leave the measurements to a paragraph, and reporting `json-ld`
+for the whole reading would overstate where the numbers came from.
+
+**Every scraped number needs its own unit.** `parseLength` reads a bare number in the
+document's *display* unit, which is right for a field someone is typing into and
+exactly wrong for a spec table: `84 x 38 x 32` in a millimetre document would silently
+become an 84mm sofa. `core/dimensions.ts` refuses a unitless number outright — a
+`QuantitativeValue` with no `unitCode` included, because a structured field is not more
+trustworthy than a paragraph when the thing that makes a number a length is missing
+from both.
+
+`parsed` versus `confirmed` needs a definition, because every item added this way has
+passed a confirm dialog and "the user saw it" would make `confirmed` universal and the
+flag meaningless. The distinction stored is narrower: **was any dimension accepted
+exactly as scraped?** A number someone typed or corrected has been checked against
+something; a number they left alone has not. `parsed` marks an item as carrying at
+least one measurement nobody verified, which is the item you want flagged when a sofa
+turns out not to fit.
+
+### 7.3 The endpoint
+
+Deployment: Vite dev middleware in development (`configureServer` only — **not**
+preview, so preview stays an honest rehearsal of a static deploy), one serverless
+function in production. **The app remains fully functional as a static build with the
+endpoint absent** — URL import degrades to a message pointing at manual entry. This is
+a convenience layer, not a dependency.
+
+`response.ok` is **not** how the client finds out whether the endpoint exists. A static
+host answering an unknown POST returns a 404, a 405, or — on any host with an SPA
+fallback, `vite preview` included — a **200 carrying `index.html`**. That last one makes
+`ok` true and then throws inside a `catch` written for network failures. The test is the
+**content type**: anything that is not JSON means absent, whatever the status line says.
+
+This endpoint fetches a URL a stranger supplied from inside the server's network, which
+is SSRF by construction rather than by accident. https only; no credentials in the URL;
+public addresses only, with the hostname **resolved first** because `evil.example.com`
+is free to publish an A record of `169.254.169.254`; redirects followed by hand, at most
+three, revalidating every hop, because a redirect is the standard way past a check that
+only looks at what the user typed; a response size cap enforced *while reading* rather
+than by trusting `content-length`; and a hard timeout. The residual hole is stated
+rather than papered over: between the DNS check and the connection a record can change,
+and closing that needs the socket pinned to the address that was checked, which `fetch`
+does not expose.
 
 ---
 
@@ -980,7 +1019,7 @@ isolated so neither blocks the core editor.
 | **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. The five kinds behave in four different ways, and the difference is the reason the kinds exist: hinged doors need their swept sector clear, sliders need the wall they park over clear, pocket doors need **nothing** in the room clear and instead need a cavity that can exist, and cased openings and windows need nothing at all. The swept sector is computed once and serves three consumers — its boundary *is* the 2D door symbol (closed leaf, arc, open leaf), it is the clearance polygon, and it positions the 3D panel — so the drawing and the check cannot disagree about where the door goes. Hanging the leaf is done with **flip buttons, not selects**, because there is no honest label for the two sides of a wall; the arc in the drawing is what makes the choice legible. The angle field holds its text locally and commits on blur or Enter, like the room name and every length field: writing per keystroke to a value that is *clamped* means the `1` of `135` is stored as `15` and the rest of the number is typed against that, so no angle whose first digit falls below the floor can be entered at all. `fill()` in a test never sees it, because it delivers the whole value in one change event. Deferred and stated rather than claimed: **windows do not open** (a casement sash would swing like a door and is not built), and the 3D layer-toggle gate on a door leaf is covered by an exhaustive unit test over `refIsEditable` rather than end to end — in the orbit view a leaf is a slab a few pixels wide seen edge-on, and walk mode does not take selection clicks at all, so hunting for it with a grid of clicks would test where the camera happens to sit. |
 | **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. Two checks that sound alike and are not: a zone asks whether a drawer opens, the probe asks whether a person fits, and they differ on whether walls count (see §9.3 — they do not for a zone, they do for the probe). Zones are drawn on the selected item only, for the reason the swing arc is drawn: a warning that says "the bookcase blocks the drawer pull" is an argument and the hatched rectangle is the evidence — but six dining chairs with pull-out zones would carpet the floor in hatching and say nothing. The probe stores the *route*, not the number, so it re-answers as furniture moves; the tool stays live in furnish mode for the same reason. The panel groups by what you would do about a problem rather than by the issue enum, keeping `validateFloor`'s blocking-first order rather than forming a second opinion about severity in the component least qualified to have one. Deferred and stated rather than claimed: **the 900mm probe height in §9.3 was wrong and is now a body interval** — a sofa back is 840mm, so the specified ray passed over the one piece of furniture the spec named; and the full medial-axis navmesh remains explicitly out of scope, so the probe reports the narrowest gap *at a sample*, not the true infimum. |
 | **8** | **Multi-room and multi-floor** — room detection and areas, per-room ceiling heights, floor stacking, ghost underlay, 3D floor toggles. Detection keeps planar-graph faces **by sign** rather than by magnitude, because a courtyard's outer face is smaller than the room around it; and it splits walls at T-junctions as well as crossings, which is the pass that decides whether it works on a real plan at all. Boundaries are centrelines, matching the Room tool, and rings are canonicalised so a second run is a genuine no-op — both asserted, because two paths that describe the same walls with different numbers is the failure this phase exists to avoid. Detection **never deletes**: an Area-tool room has no walls by design, so removing what detection cannot see would delete a legitimate room every run; unmatched rooms are reported and left. Ceiling height became editable, which is what makes it worth having — the headroom check reads it through `ceilingHeightAt`. On the stack: `index` is the ordering and nothing reads array position, a floor switch is silent in history but dirty on disk, and moving a placement carries everything standing on it while re-seating what named a wall it left behind. The plan ghost participates in nothing — not the hit graph, not the counts, not `floorBounds` — and the `listening` flag is load-bearing rather than tidy, since PlanStage reads empty canvas by `e.target === stage`. **Collision stays on the active floor whatever the 3D toggle says**, the same two-questions split as §9.3 — and in the space view a solid on another floor declines the click *before* stopping propagation, or the top storey would swallow every click meant for the floor below it. Deferred and stated rather than claimed: room-boundary dragging is dropped for v1 in favour of move-the-walls-and-re-detect (see row 2), floors can only be added at the ends of the stack, and a detected room is a simple ring — an island of walls inside one does not punch a hole in it. |
-| **9** | **Polish and portability** — File System Access save-in-place, IndexedDB autosave and recovery, thumbnails, product URL lookup endpoint + confirm dialog, export/import e2e, migration tests. |
+| **9** | **Polish and portability** — File System Access save-in-place, IndexedDB autosave and recovery, thumbnails, product URL lookup endpoint + confirm dialog, export/import e2e, migration tests. Two decisions carry the persistence half. `supportsSaveInPlace()` reads `window` **at call time**: headless Chromium has the API, so a module-load snapshot would leave the download path with no end-to-end coverage and make the in-place path undrivable from a stub — the discriminating test is a *count* of picker openings across two saves, since a wiring that re-prompts still writes the right bytes. And autosave keeps assets in their own IndexedDB store: document-only would recover a space with no background, which is the failure `assetMapFor` throws to prevent by another door, while rewriting the raster every tick is absurd — an asset is immutable once stored, so it is written by id once. Recovery has two offers because §5's "newer than the opened file" misses the case that matters after a crash, where there is no opened file; a record is deleted when its document is saved, which is what stops the prompt becoming a nag you dismiss unread. Thumbnails render offscreen from document geometry — the Konva stage is unmounted in 3D and would capture the current pan — and frame placements as well as structure, unlike `floorBounds`. On the lookup half: scraped numbers go through a parser that **refuses a unitless number**, including a `QuantitativeValue` with no `unitCode`; the client decides the endpoint is absent by **content type**, not `response.ok`, because a static host answers an unknown POST with a 200 carrying `index.html`; and the endpoint treats itself as SSRF by construction — resolving before connecting, revalidating every redirect hop, and capping the read as it goes. Four defects found on the way, each with a test watched failing first: the autosave debounce was never re-armed, so the twenty-second deadline could not bind and the mechanism in the comments was not the one running; `parseTargetUrl` waved through a literal private address, leaning on a resolver step an edge runtime skips; the labelled dimension matcher stopped at `6 ft` and dropped the inches, because a flattened table cell reads `Height6 ft 2 in` and has no word boundary for the row matcher; and — oldest and worst — the item form prefilled raw millimetres into fields parsed in the display unit, so opening a 2'7" armchair and pressing Save with no other change made it 67'6" wide. Deferred and stated rather than claimed: the product fixtures are **synthetic** and §13 now says so, DNS rebinding between the check and the connect is open because `fetch` will not pin a socket, and the confidence flag records "was any dimension accepted exactly as scraped" rather than anything about whether the page was right. |
 
 Phases 4 and 5 together are the point at which the application does what it exists to
 do. Everything after is depth.
@@ -1005,8 +1044,17 @@ do. Everything after is depth.
   exercised through the `migrateTo` seam with temporarily registered fakes, plus the
   three error paths. When a schema 2 arrives, the v1 tests do not change: the correct
   response to a failure is a migration, not a new fixture.
-- **Product parsers** — saved HTML fixtures from real retailer pages checked into the
-  repo. **No network in CI.** Each fixture asserts extracted dimensions and confidence.
+- **Product parsers** — HTML fixtures checked into the repo, one per tier. **No network
+  in CI.** Each fixture asserts extracted dimensions and confidence.
+
+  These fixtures are **synthetic**, not saved copies of real retailer pages, and that is
+  a change from what this section originally specified. Fetching those pages to build
+  fixtures is an outward-facing action against third parties taken for this
+  repository's convenience, and checking the result in would commit someone else's
+  markup — stale within a month — into a repository that is not theirs. What is lost is
+  real: a synthetic fixture cannot surprise the parser the way a live page does, so
+  these prove the tiers work as designed rather than that they work on a given
+  retailer today. See `src/core/fixtures/product/README.md`.
 - **e2e (playwright)** — import PDF → calibrate → trace walls → add item → place →
   enter 3D → walk → export → reimport → assert identical document.
 

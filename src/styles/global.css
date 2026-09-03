@@ -829,3 +829,22 @@ body {
   background: var(--surface);
   color: var(--text);
 }
+
+/* ---------- product URL lookup ---------- */
+
+.lookup {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.lookup__source,
+.lookup__evidence {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.item__flag {
+  color: var(--text-dim);
+  font-style: italic;
+}

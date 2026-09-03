@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CATEGORIES, CATEGORY_DEFAULTS, CATEGORY_LABELS, type ItemDraft } from '../core/catalog';
 import { SHAPE_KINDS, SHAPE_KIND_LABELS, type ShapeKind } from '../core/tools';
 import type { DisplayUnit } from '../core/units';
-import { parseLength } from '../core/units';
+import { formatLength, parseLength } from '../core/units';
 import { LengthField } from './LengthField';
 import type { Category, MountKind } from '../core/document';
 
@@ -40,11 +40,15 @@ export function ItemForm({ unit, initial, submitLabel, onSubmit, onCancel }: Pro
   const [name, setName] = useState(base.name);
   const [category, setCategory] = useState<Category>(base.category);
   const [shape, setShape] = useState<ShapeKind>(base.shape);
-  const [width, setWidth] = useState(base.widthMm ? String(base.widthMm) : '');
-  const [depth, setDepth] = useState(base.depthMm ? String(base.depthMm) : '');
-  const [height, setHeight] = useState(base.heightMm ? String(base.heightMm) : '');
+  // Formatted, never `String(mm)`. A bare number is read back in the document's
+  // display unit, so a 1524mm bed prefilled as "1524" is re-read as 1524 *inches* the
+  // moment the form is submitted — an edit that only changed the name would multiply
+  // every dimension by 25.4. `formatLength` writes a value that parses back to itself.
+  const [width, setWidth] = useState(base.widthMm ? formatLength(base.widthMm, unit) : '');
+  const [depth, setDepth] = useState(base.depthMm ? formatLength(base.depthMm, unit) : '');
+  const [height, setHeight] = useState(base.heightMm ? formatLength(base.heightMm, unit) : '');
   const [voidBelow, setVoidBelow] = useState(
-    base.voidBelowMm !== undefined ? String(base.voidBelowMm) : '',
+    base.voidBelowMm !== undefined ? formatLength(base.voidBelowMm, unit) : '',
   );
   const [hosts, setHosts] = useState(base.canHostSurface ?? CATEGORY_DEFAULTS[base.category].canHostSurface);
   const [quantity, setQuantity] = useState(String(base.quantityOwned ?? 1));
@@ -55,8 +59,12 @@ export function ItemForm({ unit, initial, submitLabel, onSubmit, onCancel }: Pro
   // the user has not already made a choice of their own.
   const onCategory = (next: Category) => {
     setCategory(next);
-    if (voidBelow === '' || voidBelow === String(CATEGORY_DEFAULTS[category].voidBelowMm)) {
-      setVoidBelow(String(CATEGORY_DEFAULTS[next].voidBelowMm));
+    // Formatted for the same reason as the fields above: a suggestion written as a
+    // bare number would be read back in the display unit, so the category default for
+    // a dining table would arrive as 720 inches.
+    const suggested = formatLength(CATEGORY_DEFAULTS[category].voidBelowMm, unit);
+    if (voidBelow === '' || voidBelow === suggested) {
+      setVoidBelow(formatLength(CATEGORY_DEFAULTS[next].voidBelowMm, unit));
     }
     setHosts(CATEGORY_DEFAULTS[next].canHostSurface);
   };
