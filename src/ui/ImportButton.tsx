@@ -1,18 +1,19 @@
 import { useRef, useState } from 'react';
 import { IMPORT_ACCEPT } from '../core/media';
-import { attachPlan, inspectFile, type Inspection } from './import/plan-import';
+import { attachPlan, beginImport } from './import/plan-import';
 import { useStore } from '../state/store';
 
 /**
  * "Import plan" — the entry point to PLAN.md §6.1.
  *
- * The page picker only appears for a multi-page PDF. Asking which page to use when
- * there is exactly one is a dialog whose only correct answer is the one already
- * selected, and every user has to dismiss it.
+ * The button owns the file input and the busy flag; the *pending* multi-page PDF
+ * lives in the store instead, because a file dropped on the window has to raise the
+ * same page picker this button does. Keeping it local was what would have let the two
+ * entry points drift apart — the dropped one silently taking page 1.
  */
 export function ImportButton({ disabled }: { disabled: boolean }) {
   const input = useRef<HTMLInputElement>(null);
-  const [pending, setPending] = useState<Inspection | null>(null);
+  const pending = useStore((s) => s.pendingImport);
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
 
@@ -23,13 +24,8 @@ export function ImportButton({ disabled }: { disabled: boolean }) {
   const onPick = async (file: File) => {
     setBusy(true);
     try {
-      const inspection = await inspectFile(file);
-      if (inspection.kind === 'pdf' && inspection.pageCount > 1) {
-        setPage(1);
-        setPending(inspection);
-        return;
-      }
-      await attachPlan(inspection);
+      setPage(1);
+      await beginImport(file);
     } catch (err) {
       fail(err);
     } finally {
@@ -42,7 +38,7 @@ export function ImportButton({ disabled }: { disabled: boolean }) {
     setBusy(true);
     try {
       await attachPlan(pending, page - 1);
-      setPending(null);
+      useStore.getState().setPendingImport(null);
     } catch (err) {
       fail(err);
     } finally {
@@ -101,7 +97,7 @@ export function ImportButton({ disabled }: { disabled: boolean }) {
             className="btn"
             disabled={busy}
             onClick={() => {
-              setPending(null);
+              useStore.getState().setPendingImport(null);
               // Nothing was attached, so nothing needs undoing — the gate never opened.
               useStore.getState().endCalibration();
             }}

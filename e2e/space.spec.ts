@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { clickAt, dragBetween, selectTool } from './coords';
+import { disableSaveInPlace } from './save';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -160,6 +161,12 @@ test.describe('saved views', () => {
     await page.getByTestId('save-view').click();
     await page.getByLabel('Name for this view').fill('Doorway');
     await page.getByTestId('confirm-view').click();
+
+    // Headless Chromium has File System Access, so the app would open a picker and
+    // this would wait for a download that never comes. These round-trip tests are
+    // about the container, not about which of the two ways out wrote it — the save
+    // paths themselves are covered in `persistence.spec.ts`.
+    await disableSaveInPlace(page);
 
     const download = page.waitForEvent('download');
     await page.getByTestId('save-file').click();

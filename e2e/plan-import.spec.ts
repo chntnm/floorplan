@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { docToPage } from './coords';
+import { disableSaveInPlace } from './save';
 import { makePdf, makePng } from './fixtures';
 
 /**
@@ -218,8 +219,15 @@ test.describe('portability', () => {
     await title.fill('Traced Plan');
     await title.press('Enter');
 
+    // Headless Chromium has File System Access, so the app would open a picker and
+    // this would wait for a download that never comes. These round-trip tests are
+    // about the container, not about which of the two ways out wrote it — the save
+    // paths themselves are covered in `persistence.spec.ts`.
+    await disableSaveInPlace(page);
+
     const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Save' }).click();
+    // Exact: "Save as…" is also a button, and a substring match takes both.
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const download = await downloadPromise;
     const file = await download.path();
     await expect(page.getByTestId('dirty-flag')).toBeEmpty();

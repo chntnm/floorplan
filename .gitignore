@@ -21,3 +21,6 @@ Thumbs.db
 # Working documents produced by the app itself
 *.space
 !e2e/fixtures/**/*.space
+# The frozen schema-1 container. Checked in on purpose: a migration fixture that
+# is regenerated from current code proves nothing.
+!src/core/fixtures/**/*.space

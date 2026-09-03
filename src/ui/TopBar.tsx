@@ -9,7 +9,9 @@ import {
 import { orderedFloors } from '../core/floors';
 import { useStore } from '../state/store';
 import { renameDocument } from '../state/actions';
-import { openDocumentFile, saveDocument, SPACE_EXTENSION } from './file-io';
+import { saveDocument, SPACE_EXTENSION } from './file-io';
+import { openSpace } from './file-actions';
+import { forgetAutosave } from '../state/autosave';
 import { ImportButton } from './ImportButton';
 
 export function TopBar() {
@@ -38,28 +40,53 @@ export function TopBar() {
     else setDraftTitle(doc.title);
   };
 
-  const onSave = () => {
+  const [saving, setSaving] = useState(false);
+  // A ref, not the state above: the Ctrl+S handler is registered once and would
+  // otherwise close over whatever `saving` was on the render that installed it.
+  const inFlight = useRef(false);
+
+  /**
+   * Save, and only then say it is saved.
+   *
+   * Three outcomes, and they are not the same event. A write that resolves marks the
+   * document clean and drops its autosave — that drop is what keeps the recovery
+   * prompt meaningful. A **cancelled** picker does neither and shows nothing: the
+   * user changed their mind, and a dialog saying so, or a cleared dirty flag, would
+   * both be lies. Only a genuine failure gets an alert.
+   */
+  const onSave = async (chooseTarget = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
     try {
-      saveDocument(doc);
+      // Read the document at call time: the keyboard handler outlives this render.
+      const current = useStore.getState().doc;
+      const outcome = await saveDocument(current, { chooseTarget });
+      if (outcome.kind === 'cancelled') return;
       useStore.getState().markSaved();
+      forgetAutosave(current.id);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Could not save this space.');
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   };
 
-  const onOpen = async (file: File) => {
-    try {
-      // The assets travel with the document into the runtime store; passing only
-      // `.document` here is what made a reopened background render as nothing.
-      const bundle = await openDocumentFile(file);
-      useStore.getState().loadDocument(bundle.document, bundle.assets);
-      useStore.getState().zoomToFit();
-    } catch (err) {
-      // A bad file is the user's problem to fix, not a crash to swallow: say what
-      // went wrong and leave the document they already have untouched.
-      window.alert(err instanceof Error ? err.message : 'Could not open that file.');
-    }
-  };
+  // Ctrl+S lives here rather than in the plan stage because it has to work in the 3D
+  // view too, where that stage is not mounted. Shift is "save as" — the only way back
+  // to the picker once a handle is held.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
+      // Without this the browser's own "save page" dialog opens over the app.
+      e.preventDefault();
+      void onSave(e.shiftKey);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // Registered once. Everything it reads comes from `getState()` at fire time.
+  }, []);
 
   return (
     <header className="topbar">
@@ -94,8 +121,25 @@ export function TopBar() {
         <button type="button" className="seg" onClick={() => fileInput.current?.click()}>
           Open
         </button>
-        <button type="button" className="seg" data-testid="save-file" onClick={onSave}>
-          Save
+        <button
+          type="button"
+          className="seg"
+          data-testid="save-file"
+          disabled={saving}
+          title="Save (Ctrl+S)"
+          onClick={() => void onSave()}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          className="seg"
+          data-testid="save-file-as"
+          disabled={saving}
+          title="Save as… (Ctrl+Shift+S)"
+          onClick={() => void onSave(true)}
+        >
+          Save as…
         </button>
         <ImportButton disabled={calibrating} />
         <input
@@ -108,7 +152,7 @@ export function TopBar() {
             const file = e.target.files?.[0];
             // Clear the input so re-opening the same file fires change again.
             e.target.value = '';
-            if (file) void onOpen(file);
+            if (file) void openSpace(file);
           }}
         />
       </div>

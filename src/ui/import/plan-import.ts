@@ -26,6 +26,7 @@ import {
   isRaster,
   sniffMime,
   type ImportMime,
+  type Inspection,
   type RasterMime,
 } from '../../core/media';
 import { putAsset } from '../../state/assets';
@@ -41,9 +42,7 @@ import { decodeImageSize } from './raster';
  */
 const pdfModule = () => import('./pdf');
 
-export type Inspection =
-  | { kind: 'image'; fileName: string; mime: RasterMime; bytes: Uint8Array }
-  | { kind: 'pdf'; fileName: string; bytes: Uint8Array; pageCount: number };
+export type { Inspection };
 
 export class ImportError extends Error {
   constructor(message: string) {
@@ -122,4 +121,25 @@ export async function attachPlan(inspection: Inspection, pageIndex = 0): Promise
 
   setBackground(background, assets);
   useStore.getState().beginCalibration();
+}
+
+/**
+ * The one import path, whether the file was picked or dropped on the window.
+ *
+ * A multi-page PDF stops here and parks in the store; the page picker renders from
+ * that and calls `attachPlan` once a page is chosen. Everything else attaches
+ * immediately — asking which page to use when there is exactly one is a dialog whose
+ * only correct answer is the one already selected.
+ *
+ * Two entry points each calling `inspectFile` and then deciding for themselves is how
+ * a dropped file quietly grows different behaviour from a picked one, and §6's "both
+ * paths produce identical structures, one code path" is a claim about this function.
+ */
+export async function beginImport(file: File): Promise<void> {
+  const inspection = await inspectFile(file);
+  if (inspection.kind === 'pdf' && inspection.pageCount > 1) {
+    useStore.getState().setPendingImport(inspection);
+    return;
+  }
+  await attachPlan(inspection);
 }

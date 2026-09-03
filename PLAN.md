@@ -350,14 +350,101 @@ offered when a document has no assets — useful for diffing and version control
 no-op entry, so the machinery exists before it is needed. Loading a newer version than
 the app understands produces a clear message, not a crash or a silent partial parse.
 
-### Save mechanics
+### 5.1 Save mechanics
+
+Two ways out, one pipeline. The bytes are built identically for both — document,
+assets, thumbnail — and only the last step differs.
 
 - **File System Access API** where available (Chrome, Edge) — `showSaveFilePicker`, the
   handle retained in memory so Ctrl+S is a true save-in-place, no download prompt.
-- **Download fallback** everywhere else — anchor with a blob URL.
-- **IndexedDB autosave** every 20s and on every meaningful mutation, keyed by document
-  id. On load, if an autosave is newer than the opened file, offer recovery.
-- **Import** by file picker or drag-and-drop onto the window.
+- **Download fallback** everywhere else (Firefox, Safari) — anchor with a blob URL. Not
+  a degraded mode to apologise for: it is what proved the portability requirement end
+  to end through phases 3 to 8, and it is still the fallback when a retained handle has
+  lost permission.
+- **Import** by file picker or drag-and-drop onto the window. One routing function, so
+  a dropped `.space` and a picked one cannot come to differ — including the page picker
+  a multi-page PDF raises, which is why the pending inspection lives in the store
+  rather than inside the import button.
+
+`supportsSaveInPlace()` reads `window` **at call time**, never at module load. A
+snapshot decides for the life of the page from whatever was true during the first
+import, which makes the branch unreachable from a test — and headless Chromium *has*
+the API, so without the call-time read the download path would ship with no end-to-end
+coverage at all and the in-place path could not be driven by a stub either.
+
+A handle is **session state, not document state**: it does not serialize, it does not
+survive a reload, and it belongs to one document, so it lives beside the asset store
+and `loadDocument`/`newDocument` clear it. A handle that outlived its document would
+send the next Ctrl+S into the previous space's file, with no warning and no undo.
+"Save as…" exists because otherwise the retained handle is a trap — once a document
+has a file there would be no way to write it anywhere else.
+
+**Cancelling is a decision, not a failure.** A dismissed picker throws `AbortError`;
+reported as an error it becomes an alert about a save the user chose not to make, and
+it is then indistinguishable from a real write failure. It is translated to
+`SaveCancelled`, nothing is shown, and the document stays dirty because it genuinely
+was not saved. Nothing marks the document clean until a write resolves.
+
+### 5.2 Autosave and recovery
+
+**IndexedDB, two object stores**: documents keyed by document id, assets keyed by asset
+id. An autosave that keeps only `document.json` recovers a space whose background is
+gone — the same failure `assetMapFor` throws to prevent, reached through a different
+door — but rewriting a megabyte of raster every twenty seconds is absurd. The way out
+is that an asset is **immutable once stored**: `putAsset` mints a new id for new bytes
+and never rewrites an existing one, so assets are written by id exactly once and every
+tick after that writes the document record alone. The cost of a tick does not depend on
+how big the background is.
+
+§5's "every 20s **and** on every meaningful mutation" is two schedules as written, one
+of which writes on every frame of a drag. The reading that satisfies both is a
+**debounce with a deadline**: two seconds after the last change, but never more than
+twenty seconds since the last write, so continuous activity cannot postpone the write
+indefinitely by resetting the debounce on every frame.
+
+**A record is deleted the moment its document is saved to a file.** That rule is what
+keeps the prompt worth reading: a surviving record means that document had unsaved
+changes when the tab went away. Without it every clean reload offers to recover work
+already saved, and the prompt is trained out of the user long before the one time it
+matters.
+
+Recovery has **two offers**, because §5's "newer than the opened file" answers the easy
+half and the case that matters after a crash is the one it does not describe — there is
+*no* opened file. The tab died with an hour of drawing in it and comes back on a fresh
+empty document whose id the record has never heard of.
+
+- `newer` — an autosave for *this* document holding a later edit than the file that was
+  opened. Compared on the document's own `modifiedAt`, not on when the autosave ran:
+  the question is which state is further along, not which write happened last.
+- `orphan` — the current document is structurally untouched, so there is nothing to
+  lose, and an autosave for another document exists.
+
+A restored document arrives **dirty**. It has never been written to a file, and opening
+it clean would let the user close the tab a second time on the same unsaved work. There
+is no handle either, so the next save asks where to put it — which is why recovery does
+not pretend to restore "the file you were working on".
+
+Every database call resolves rather than rejecting when IndexedDB is unavailable,
+blocked by a privacy setting, or over quota. A safety net that can take down the
+application it is protecting is a worse bargain than no net.
+
+### 5.3 Thumbnail
+
+Rendered **offscreen from document geometry**, not from `stage.toDataURL()`. The stage
+version couples saving to the plan view being mounted — there is no stage in 3D mode —
+and captures the current pan and zoom, so the picture is whatever corner of the plan you
+were looking at rather than the plan.
+
+Split so the seam is testable: the fit transform and the ring extraction are pure, and
+what is left is `ctx.fill()`. The active floor only, framed on its own extent — the
+ghost underlay is excluded for the same reason it is excluded from `floorBounds`. The
+extent covers **placements as well as rooms and walls**, unlike `floorBounds`: an
+inventory-first document with furniture and no structure yet has a perfectly good
+picture and would otherwise produce none.
+
+An empty floor gets **no thumbnail** rather than a blank square, and no failure in this
+path can fail a save — losing a preview is cosmetic, and there is no environment where
+the fix is to give up on the document.
 
 ---
 
@@ -910,7 +997,14 @@ do. Everything after is depth.
   transforms, surface-mount cycle rejection.
 - **Format round-trip** — document → `.space` → document deep-equals, with assets.
   Fixture files checked in per schema version; every migration tested against a real
-  fixture from the previous version.
+  fixture from the previous version. `src/core/fixtures/schema-v1.space` is that file
+  for schema 1: written once, hand-authored rather than produced by `createDocument`,
+  and committed. Nothing regenerates it, because a fixture produced by the same build
+  that reads it asserts only that today's writer agrees with today's reader. There is
+  no migration to test yet — `MIGRATIONS` is empty at schema 1 — so the chain itself is
+  exercised through the `migrateTo` seam with temporarily registered fakes, plus the
+  three error paths. When a schema 2 arrives, the v1 tests do not change: the correct
+  response to a failure is a migration, not a new fixture.
 - **Product parsers** — saved HTML fixtures from real retailer pages checked into the
   repo. **No network in CI.** Each fixture asserts extracted dimensions and confidence.
 - **e2e (playwright)** — import PDF → calibrate → trace walls → add item → place →

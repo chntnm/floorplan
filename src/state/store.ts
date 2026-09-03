@@ -47,7 +47,9 @@ import { decodeCamera, type SpaceCamera } from '../core/views';
 import { toDegrees } from '../core/geometry/vec';
 import type { PlacementSnapHint } from '../core/placement-snap';
 import type { AssetMap } from '../core/space-file';
+import type { Inspection } from '../core/media';
 import { adoptAssets, clearAssets } from './assets';
+import { clearSaveTarget } from './save-target';
 
 // immer 10 gates patch recording behind this plugin. Without it `produceWithPatches`
 // throws at runtime — which neither typecheck nor lint can see.
@@ -155,6 +157,19 @@ export type WallTransform = {
   b: { x: number; y: number };
 };
 
+/** Extra instruction for `loadDocument`. */
+export type LoadOptions = {
+  /**
+   * Whether the loaded document counts as having unsaved changes.
+   *
+   * False for a file that was just opened — it is on disk exactly as it is in memory.
+   * True for a recovered autosave, which by definition was never written anywhere the
+   * user can find it; marking it clean would let them close the tab a second time on
+   * the same unsaved work.
+   */
+  dirty?: boolean;
+};
+
 export type StoreState = {
   // -- document slice ------------------------------------------------------
   doc: SpaceDocument;
@@ -166,7 +181,7 @@ export type StoreState = {
   mutate: (label: string, recipe: (draft: SpaceDocument) => void, options?: MutateOptions) => void;
   undo: () => void;
   redo: () => void;
-  loadDocument: (doc: SpaceDocument, assets?: AssetMap) => void;
+  loadDocument: (doc: SpaceDocument, assets?: AssetMap, options?: LoadOptions) => void;
   newDocument: () => void;
   markSaved: () => void;
 
@@ -181,6 +196,13 @@ export type StoreState = {
   stageSize: Size;
   selection: SelectionRef[];
   draft: Draft | null;
+  /**
+   * A multi-page PDF waiting for its page to be chosen.
+   *
+   * Editor state: it is a half-finished gesture, like a draft wall chain, and it
+   * carries the file's bytes — which have no business on the undo stack.
+   */
+  pendingImport: Inspection | null;
   /** Snapped cursor position in document mm, or null when the pointer is outside. */
   cursor: { x: number; y: number } | null;
   snapHints: SnapHint[];
@@ -278,6 +300,7 @@ export type StoreState = {
   clearFloorScopedState: () => void;
   setPendingCamera: (camera: SpaceCamera | null) => void;
   setNotice: (notice: string | null) => void;
+  setPendingImport: (inspection: Inspection | null) => void;
   applySavedView: (view: SavedView) => void;
   beginCalibration: () => void;
   setCalibrationRef: (ref: CalibrationRef | null) => void;
@@ -391,6 +414,7 @@ export const useStore = create<StoreState>((set, get) => ({
       // The notice describes what the last action did; undoing it leaves a sentence
       // about something that no longer happened.
       notice: null,
+      pendingImport: null,
     });
   },
 
@@ -409,20 +433,26 @@ export const useStore = create<StoreState>((set, get) => ({
       draft: null,
       transform: null,
       notice: null,
+      pendingImport: null,
     });
   },
 
-  // The asset store is the other half of the document (see `state/assets.ts`), so
-  // replacing one replaces the other. Leaving stale bytes behind would mean the next
-  // save wrote a file carrying the previous document's background.
-  loadDocument: (doc, assets) => {
+  // The asset store and the save target are the other halves of the open document
+  // (see `state/assets.ts`, `state/save-target.ts`), so replacing one replaces all
+  // three. Stale bytes would mean the next save wrote a file carrying the previous
+  // document's background; a stale handle would write it into the previous
+  // document's *file*, which has no warning and no undo.
+  loadDocument: (doc, assets, options) => {
     if (assets) adoptAssets(doc, assets);
     else clearAssets();
+    clearSaveTarget();
     set({
       doc,
       past: [],
       future: [],
-      dirty: false,
+      // A recovered autosave has never been written to a file, so it arrives dirty.
+      // Loading a `.space` does not: that file is on disk and matches what is open.
+      dirty: options?.dirty ?? false,
       selection: [],
       draft: null,
       transform: null,
@@ -437,11 +467,13 @@ export const useStore = create<StoreState>((set, get) => ({
       walker: null,
       pendingCamera: null,
       notice: null,
+      pendingImport: null,
     });
   },
 
   newDocument: () => {
     clearAssets();
+    clearSaveTarget();
     set({
       doc: freshDocument(),
       past: [],
@@ -462,6 +494,7 @@ export const useStore = create<StoreState>((set, get) => ({
       walker: null,
       pendingCamera: null,
       notice: null,
+      pendingImport: null,
     });
   },
 
@@ -496,6 +529,7 @@ export const useStore = create<StoreState>((set, get) => ({
   floorVisibility: 'active',
   pendingCamera: null,
   notice: null,
+  pendingImport: null,
 
   setEditMode: (editMode) =>
     // Structure tools have no meaning in furnish mode, and a half-drawn wall would
@@ -508,6 +542,7 @@ export const useStore = create<StoreState>((set, get) => ({
       placingItemId: null,
       selection: [],
       notice: null,
+      pendingImport: null,
       tool: editMode === 'plan' ? get().tool : 'select',
     }),
 
@@ -603,6 +638,7 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
   setPendingCamera: (pendingCamera) => set({ pendingCamera }),
   setNotice: (notice) => set({ notice }),
+  setPendingImport: (pendingImport) => set({ pendingImport }),
 
   /**
    * Jump to a bookmarked view.

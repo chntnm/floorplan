@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { clickAt, dragBetween, selectTool } from './coords';
+import { disableSaveInPlace } from './save';
 
 /**
  * Multiple floors — PLAN.md §11.
@@ -75,6 +76,12 @@ test.describe('the stack', () => {
     await drawRoom(page);
     await page.getByTestId('add-floor-above').click();
     await drawRoom(page, { x: 3000, y: 3000 });
+
+    // Headless Chromium has File System Access, so the app would open a picker and
+    // this would wait for a download that never comes. These round-trip tests are
+    // about the container, not about which of the two ways out wrote it — the save
+    // paths themselves are covered in `persistence.spec.ts`.
+    await disableSaveInPlace(page);
 
     const download = page.waitForEvent('download');
     await page.getByTestId('save-file').click();

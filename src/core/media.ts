@@ -65,6 +65,18 @@ export function assetPath(id: string, mime: ImportMime): string {
   return `assets/${id}.${extensionFor(mime)}`;
 }
 
+/**
+ * What a picked file turned out to be.
+ *
+ * The answer to "what is this", which is a media question, so it lives here rather
+ * than with the importer that produces it — the store holds a pending one while a
+ * multi-page PDF waits for its page to be chosen, and the state layer has no business
+ * importing a type out of the UI layer to do it.
+ */
+export type Inspection =
+  | { kind: 'image'; fileName: string; mime: RasterMime; bytes: Uint8Array }
+  | { kind: 'pdf'; fileName: string; bytes: Uint8Array; pageCount: number };
+
 /** The list shown in an error message and in the file picker's `accept`. */
 export const IMPORT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
 export const IMPORT_FORMATS_LABEL = 'PDF, PNG, JPEG or WebP';

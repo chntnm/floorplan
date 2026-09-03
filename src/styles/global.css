@@ -789,3 +789,43 @@ body {
   margin: 0;
   color: var(--text-dim);
 }
+
+/* ---------- recovery banner ---------- */
+
+.recovery {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.recovery__text {
+  flex: 1;
+  color: var(--text);
+}
+
+/* ---------- drag-and-drop overlay ---------- */
+
+.dropzone {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  /* Feedback, never a hit area — a drop landing on the overlay instead of the
+     window is the one way this feature breaks itself. */
+  pointer-events: none;
+}
+
+.dropzone__label {
+  padding: 14px 22px;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}

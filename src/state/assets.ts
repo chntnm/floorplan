@@ -139,6 +139,16 @@ export function assetMapFor(doc: SpaceDocument): AssetMap {
   return map;
 }
 
+/**
+ * Every asset currently held.
+ *
+ * The autosave database wants the bytes by id, not by path; the `.space` writer wants
+ * the reverse. Both views are cheap, and neither is the "real" one.
+ */
+export function allAssets(): StoredAsset[] {
+  return [...store.values()];
+}
+
 /** Every id currently held. Test and diagnostic use. */
 export function assetIds(): Id[] {
   return [...store.keys()];
