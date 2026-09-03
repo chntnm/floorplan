@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createDocument } from '../core/document';
 import { activeFloor, floorBounds, useStore, HISTORY_LIMIT } from './store';
 import {
   addRoomRect,
@@ -381,6 +382,16 @@ describe('the walkway route', () => {
   it('goes away with the document it was drawn on', () => {
     useStore.getState().setWalkway(ROUTE);
     useStore.getState().newDocument();
+    expect(useStore.getState().walkway).toBeNull();
+  });
+
+  it('does not survive opening a file', () => {
+    // A route drawn on one plan means nothing on another, and would draw a line
+    // across a room it was never measured in.
+    useStore.getState().setWalkway(ROUTE);
+    useStore.getState().loadDocument(
+      createDocument({ id: 'other', floorId: 'f2', now: '2026-01-01T00:00:00.000Z' }),
+    );
     expect(useStore.getState().walkway).toBeNull();
   });
 });

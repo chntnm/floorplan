@@ -206,6 +206,10 @@ export function samplePath(path: readonly Vec2[], step: number): { at: Vec2; dir
 /**
  * The narrowest gap across the path, measured square to it at each sample.
  *
+ * **Assumes every obstruction is already in the band you care about.** Nothing here
+ * consults spans; `walkwayObstructions` is what filters by height, and passing it an
+ * unfiltered list would measure gaps against rugs and ceiling pendants.
+ *
  * Null for a path with no length — there is nothing to be narrow.
  */
 export function narrowestGap(

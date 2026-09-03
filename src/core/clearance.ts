@@ -179,6 +179,27 @@ export function floorZones(
 // Violations
 // ---------------------------------------------------------------------------
 
+/**
+ * Everything a placement is stacked on, however many items deep.
+ *
+ * Walked rather than looked up one level: a tray on a lamp on a dresser is still on
+ * the dresser. A cycle terminates the walk instead of hanging — `placementVolume`
+ * has already thrown `MountCycleError` for those, so this only guards the traversal.
+ */
+function hostsAbove(byId: Map<Id, Placement>, placement: Placement): Set<Id> {
+  const hosts = new Set<Id>();
+  let current = placement;
+  while (current.mount.kind === 'surface') {
+    const hostId = current.mount.hostId;
+    if (hosts.has(hostId)) break;
+    hosts.add(hostId);
+    const next = byId.get(hostId);
+    if (!next) break;
+    current = next;
+  }
+  return hosts;
+}
+
 export type ZoneViolation = {
   /** The item whose clearance is compromised. */
   placementId: Id;
@@ -192,16 +213,27 @@ export type ZoneViolation = {
 /**
  * Everything standing in a clearance zone it should not be.
  *
- * The host is skipped (a zone starts at its own bounding-box edge, so it could only
- * ever catch itself on a rounding error) and anything a stride clears is skipped for
- * the reason in the module comment. Everything else is a plain volume-vs-volume test:
- * footprints overlap in plan *and* solid spans overlap.
+ * Three things are skipped. The host itself, because a zone starts at its own
+ * bounding-box edge. Anything a stride clears, for the reason in the module comment.
+ * And **anything stacked on the host**, at any depth: a lamp on the dresser rides on
+ * the dresser and cannot be in the way of it opening, whatever its footprint does.
+ *
+ * That last one is not theoretical. A zone runs from the floor to `heightMm`, and the
+ * default `heightMm` is the host's own height — which is also the elevation a
+ * surface-mounted child resolves to, so the two spans meet exactly and `spansOverlap`
+ * is strict enough to stay quiet. Give a zone the explicit height the field exists for
+ * ("a drawer pull at 810mm is indifferent to a shelf at 1500") and the coincidence
+ * disappears: the lamp on the dresser starts reporting that it blocks the dresser.
+ *
+ * Everything else is a plain volume-vs-volume test: footprints overlap in plan *and*
+ * solid spans overlap.
  */
 export function findClearanceViolations(doc: SpaceDocument, floor: Floor): ZoneViolation[] {
   const zones = floorZones(doc, floor);
   if (zones.length === 0) return [];
 
-  const obstacles: { id: Id; volume: Volume }[] = [];
+  const byId = new Map(floor.placements.map((p) => [p.id, p]));
+  const obstacles: { id: Id; volume: Volume; ridesOn: Set<Id> }[] = [];
   for (const placement of floor.placements) {
     const item = findItem(doc, placement.itemId);
     if (!item) continue;
@@ -209,7 +241,7 @@ export function findClearanceViolations(doc: SpaceDocument, floor: Floor): ZoneV
       const volume = placementVolume(doc, placement, item);
       // What you step over cannot block a drawer.
       if (volume.span.top < CLEARANCE_STEP_OVER_MM) continue;
-      obstacles.push({ id: placement.id, volume });
+      obstacles.push({ id: placement.id, volume, ridesOn: hostsAbove(byId, placement) });
     } catch (err) {
       if (err instanceof MountCycleError) continue;
       throw err;
@@ -220,6 +252,7 @@ export function findClearanceViolations(doc: SpaceDocument, floor: Floor): ZoneV
   for (const { placement, zone, volume } of zones) {
     for (const obstacle of obstacles) {
       if (obstacle.id === placement.id) continue;
+      if (obstacle.ridesOn.has(placement.id)) continue;
       if (!spansOverlap(volume.span, obstacle.volume.span)) continue;
 
       const overlapMm2 = intersectionArea(volume.outline, obstacle.volume.outline);

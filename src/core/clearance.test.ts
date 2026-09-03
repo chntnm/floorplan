@@ -240,3 +240,37 @@ describe('what blocks a zone', () => {
     expect(violations(d)).toEqual([]);
   });
 });
+
+describe('something sitting on the zoned item itself', () => {
+  const LAMP: ItemDraft = {
+    name: 'Lamp',
+    category: 'lighting',
+    shape: 'circle',
+    widthMm: 300,
+    depthMm: 300,
+    heightMm: 500,
+    voidBelowMm: 0,
+  };
+
+  it('does not report a lamp on the dresser as blocking the dresser drawers', () => {
+    // The lamp rides on the host. It cannot be in the way of the host opening,
+    // whatever its footprint does — and the zone runs to the floor, so the only
+    // thing keeping this quiet by accident is the zone top and the surface height
+    // being the same number.
+    const d = doc();
+    const dresser = place(d, { ...DRESSER, clearances: [{ ...DRAWER, heightMm: 900 }] }, { x: 0, y: 0 });
+    place(d, LAMP, { x: 0, y: 400 }, { mount: { kind: 'surface', hostId: dresser.id } });
+
+    expect(violations(d)).toEqual([]);
+  });
+
+  it('still reports something stacked on a different item nearby', () => {
+    // The exemption is "it rides on the host", not "it is off the floor".
+    const d = doc();
+    place(d, DRESSER, { x: 0, y: 0 });
+    const table = place(d, { ...DRESSER, name: 'Side table', heightMm: 500 }, { x: 0, y: 900 });
+    place(d, LAMP, { x: 0, y: 600 }, { mount: { kind: 'surface', hostId: table.id } });
+
+    expect(violations(d).length).toBeGreaterThan(0);
+  });
+});
