@@ -4,6 +4,7 @@ import { CAMERA_MODES, CAMERA_MODE_LABELS } from '../../core/walk';
 import { spaceViews, type SpaceCamera } from '../../core/views';
 import { roomAt } from '../../core/placement';
 import { formatLength } from '../../core/units';
+import { FLOOR_VISIBILITY, FLOOR_VISIBILITY_LABELS } from '../../core/floors';
 import { activeFloor, useStore } from '../../state/store';
 import { addSavedView, removeSavedView } from '../../state/actions';
 
@@ -24,12 +25,13 @@ const HELP: Record<string, string> = {
  * a surface where its state becomes readable.
  */
 export function SpaceHud({ poseRef }: { poseRef: RefObject<SpaceCamera | null> }) {
-  const { doc, cameraMode, walker, showCeilings } = useStore(
+  const { doc, cameraMode, walker, showCeilings, floorVisibility } = useStore(
     useShallow((s) => ({
       doc: s.doc,
       cameraMode: s.cameraMode,
       walker: s.walker,
       showCeilings: s.showCeilings,
+      floorVisibility: s.floorVisibility,
     })),
   );
   const [naming, setNaming] = useState(false);
@@ -73,6 +75,21 @@ export function SpaceHud({ poseRef }: { poseRef: RefObject<SpaceCamera | null> }
             onClick={() => useStore.getState().setCameraMode(mode)}
           >
             {CAMERA_MODE_LABELS[mode]}
+          </button>
+        ))}
+        {/* Display only. Collision always comes from the active floor, or walking
+            would change depending on what you had chosen to look at. */}
+        {FLOOR_VISIBILITY.map((v) => (
+          <button
+            key={v}
+            type="button"
+            className="seg"
+            data-active={v === floorVisibility}
+            aria-pressed={v === floorVisibility}
+            data-testid={'floors-' + v}
+            onClick={() => useStore.getState().setFloorVisibility(v)}
+          >
+            {FLOOR_VISIBILITY_LABELS[v]}
           </button>
         ))}
         <button

@@ -6,6 +6,7 @@ import {
   VIEW_MODES,
   VIEW_MODE_LABELS,
 } from '../core/modes';
+import { orderedFloors } from '../core/floors';
 import { useStore } from '../state/store';
 import { renameDocument } from '../state/actions';
 import { openDocumentFile, saveDocument, SPACE_EXTENSION } from './file-io';
@@ -147,6 +148,27 @@ export function TopBar() {
             {EDIT_MODE_LABELS[mode]}
           </button>
         ))}
+      </div>
+
+      {/* Switching floors is navigation, not a property, so it lives with the view
+          controls rather than in the properties panel — where the floor's own name,
+          elevation and ceiling are edited. */}
+      <div className="topbar__group" role="group" aria-label="Floor">
+        <select
+          className="seg seg--select"
+          aria-label="Active floor"
+          data-testid="floor-picker"
+          value={doc.activeFloorId}
+          disabled={calibrating}
+          onChange={(e) => useStore.getState().setActiveFloor(e.target.value)}
+        >
+          {/* Top of the list is the top of the building, the way a lift panel reads. */}
+          {[...orderedFloors(doc)].reverse().map((floor) => (
+            <option key={floor.id} value={floor.id}>
+              {floor.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="topbar__group" role="group" aria-label="View">

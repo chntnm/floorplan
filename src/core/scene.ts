@@ -39,6 +39,8 @@ export type SceneRef = { kind: 'wall' | 'placement' | 'opening'; id: Id };
 export type SceneSolid = {
   /** Unique within the scene. A wall contributes several, suffixed by index. */
   id: string;
+  /** Which floor it came from. In a stacked scene, only the active floor's solids take clicks. */
+  floorId: Id;
   ref: SceneRef;
   outline: Polygon;
   span: Span;
@@ -52,6 +54,7 @@ export type SceneSolid = {
 /** A horizontal slab — a room's floor or its ceiling. */
 export type SceneSlab = {
   id: string;
+  floorId: Id;
   kind: 'floor' | 'ceiling';
   roomId: Id;
   boundary: Polygon;
@@ -98,6 +101,7 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
       }
       solids.push({
         id: `${wall.id}:${i}`,
+        floorId: floor.id,
         ref: { kind: 'wall', id: wall.id },
         outline,
         span: { bottom: segment.bottom, top: segment.top },
@@ -120,6 +124,7 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
     const glazing = leafOf(opening).style === 'pane';
     solids.push({
       id: `${opening.id}:leaf`,
+      floorId: floor.id,
       ref: { kind: 'opening', id: opening.id },
       outline: panel,
       span: openingSpan(opening),
@@ -155,6 +160,7 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
 
     solids.push({
       id: placement.id,
+      floorId: floor.id,
       ref: { kind: 'placement', id: placement.id },
       outline: worldOutline(placement, item),
       span: clamped,
@@ -167,6 +173,7 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
   for (const room of floor.rooms) {
     slabs.push({
       id: `${room.id}:floor`,
+      floorId: floor.id,
       kind: 'floor',
       roomId: room.id,
       boundary: room.boundary,
@@ -175,6 +182,7 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
     });
     slabs.push({
       id: `${room.id}:ceiling`,
+      floorId: floor.id,
       kind: 'ceiling',
       roomId: room.id,
       boundary: room.boundary,
@@ -191,6 +199,74 @@ export function buildScene(doc: SpaceDocument, floor: Floor): SceneModel {
       (h, r) => Math.max(h, r.ceilingHeightMm),
       floor.defaultCeilingHeightMm,
     ),
+  };
+}
+
+/**
+ * Opacity for a floor that is not the one being edited.
+ *
+ * Enough to read as structure, little enough to see the active floor through. Every
+ * floor drawn opaque is a building with a roof on it, which answers no question.
+ */
+export const OTHER_FLOOR_OPACITY = 0.22;
+
+/**
+ * Several floors stacked at their real elevations, for the space view.
+ *
+ * Each floor is built by `buildScene` in its own frame and then shifted by its
+ * elevation relative to the active floor's datum — so the active floor keeps the
+ * coordinates everything else in the application uses, and the storeys above and
+ * below arrive where they belong without a second geometry path.
+ *
+ * **Display only.** The walker is fed `blockersOf(buildScene(doc, activeFloor))` and
+ * always has been; feeding it this would make traversal depend on a view setting, and
+ * would have you colliding with the walls of a floor you are only looking at. Floors
+ * default to `elevationMm: 0`, so before an elevation is set that collision would be
+ * with invisible walls in the same band as your own.
+ *
+ * Non-active floors lose their ceilings — the slab of the floor above is the ceiling,
+ * and a lid over every storey would hide the stack that is the point of the view.
+ */
+export function buildStack(
+  doc: SpaceDocument,
+  floors: readonly Floor[],
+  activeFloorId: Id,
+): SceneModel {
+  const active = floors.find((f) => f.id === activeFloorId) ?? floors[0];
+  const datum = active?.elevationMm ?? 0;
+
+  const solids: SceneSolid[] = [];
+  const slabs: SceneSlab[] = [];
+  let ceilingHeightMm = 0;
+
+  for (const floor of floors) {
+    const scene = buildScene(doc, floor);
+    const dz = floor.elevationMm - datum;
+    const isActive = floor.id === activeFloorId;
+
+    for (const solid of scene.solids) {
+      solids.push({
+        ...solid,
+        id: `${floor.id}/${solid.id}`,
+        span: { bottom: solid.span.bottom + dz, top: solid.span.top + dz },
+        opacity: isActive ? solid.opacity : Math.min(solid.opacity, OTHER_FLOOR_OPACITY),
+      });
+    }
+
+    for (const slab of scene.slabs) {
+      if (!isActive && slab.kind === 'ceiling') continue;
+      slabs.push({ ...slab, id: `${floor.id}/${slab.id}`, elevationMm: slab.elevationMm + dz });
+    }
+
+    ceilingHeightMm = Math.max(ceilingHeightMm, dz + scene.ceilingHeightMm);
+  }
+
+  return {
+    solids,
+    slabs,
+    // Framed across every floor shown, or the camera fits one storey and clips the rest.
+    bounds: sceneBounds(solids, floors.flatMap((f) => f.rooms)),
+    ceilingHeightMm: Math.max(ceilingHeightMm, 1),
   };
 }
 

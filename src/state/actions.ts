@@ -19,6 +19,13 @@ import type {
 } from '../core/document';
 import { createOpening, type OpeningDefaults } from '../core/openings';
 import { detectRooms, type RoomDetection } from '../core/rooms';
+import {
+  createStackedFloor,
+  descendantsOf,
+  floorAbove,
+  floorBelow,
+  remountForFloor,
+} from '../core/floors';
 import { DEFAULT_SWING, clampSwingAngle, type Swing } from '../core/swing';
 import { nearestWall, projectOntoWall } from '../core/geometry/wall';
 import { createSavedView, uniqueViewName, type SpaceCamera } from '../core/views';
@@ -151,6 +158,137 @@ export function deleteSelection(selection: readonly SelectionRef[]): void {
       }
     }
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Floors (PLAN.md §11)
+// ---------------------------------------------------------------------------
+
+/** Add an empty floor at the top or bottom of the stack, and switch to it. */
+export function addFloor(where: 'above' | 'below'): Id {
+  const { doc } = useStore.getState();
+  const floor = createStackedFloor(doc, where, newId());
+
+  useStore.getState().mutate(`Add floor ${where}`, (draft) => {
+    draft.floors.push(floor);
+  });
+  useStore.getState().setActiveFloor(floor.id);
+  return floor.id;
+}
+
+export function renameFloor(floorId: Id, name: string): void {
+  useStore.getState().mutate('Rename floor', (draft) => {
+    const floor = draft.floors.find((f) => f.id === floorId);
+    if (floor) floor.name = name;
+  });
+}
+
+/**
+ * Set a floor's datum above building zero.
+ *
+ * Signed and unclamped on purpose: a basement's datum is negative, and so is a garage
+ * half a storey down.
+ */
+export function setFloorElevation(floorId: Id, elevationMm: number): void {
+  useStore.getState().mutate('Floor elevation', (draft) => {
+    const floor = draft.floors.find((f) => f.id === floorId);
+    if (floor) floor.elevationMm = Math.round(elevationMm);
+  });
+}
+
+export function setFloorCeilingHeight(floorId: Id, heightMm: number): void {
+  useStore.getState().mutate('Default ceiling', (draft) => {
+    const floor = draft.floors.find((f) => f.id === floorId);
+    if (floor) floor.defaultCeilingHeightMm = Math.max(1, Math.round(heightMm));
+  });
+}
+
+/**
+ * Remove a floor and everything on it.
+ *
+ * Refuses the last floor: a document with no floors has nowhere to draw, and every
+ * caller of `activeFloor` would be falling back forever. Returns a sentence when it
+ * refuses rather than failing quietly.
+ *
+ * Anything on *another* floor surface-mounted onto something here is re-seated on its
+ * own floor, the same repair deletion has done since phase 4. Nothing in the editor
+ * can create a cross-floor surface mount, but the model can express one and a file
+ * can contain one, and a dangling `hostId` resolves through `findPlacement` — which
+ * searches every floor — into an elevation measured against the wrong datum.
+ */
+export function deleteFloor(floorId: Id): string | null {
+  const { doc } = useStore.getState();
+  if (doc.floors.length <= 1) return 'A space needs at least one floor.';
+
+  const going = doc.floors.find((f) => f.id === floorId);
+  if (!going) return null;
+
+  const orphanedHosts = new Set(going.placements.map((p) => p.id));
+  const next = floorBelow(doc, floorId) ?? floorAbove(doc, floorId) ?? doc.floors[0]!;
+
+  useStore.getState().mutate(`Delete floor ${going.name}`, (draft) => {
+    draft.floors = draft.floors.filter((f) => f.id !== floorId);
+    for (const floor of draft.floors) {
+      for (const placement of floor.placements) {
+        if (placement.mount.kind === 'surface' && orphanedHosts.has(placement.mount.hostId)) {
+          placement.mount = { kind: 'floor' };
+          placement.elevation = 0;
+        }
+      }
+    }
+    if (draft.activeFloorId === floorId) draft.activeFloorId = next.id;
+  });
+
+  useStore.getState().setActiveFloor(next.id);
+  return null;
+}
+
+/**
+ * Move a placement — and everything standing on it — to another floor.
+ *
+ * An explicit action rather than a drag, per PLAN §11: the plan view shows one floor,
+ * so there is nowhere to drag *to*, and a gesture that silently changed storeys would
+ * be indistinguishable from a nudge.
+ *
+ * Two things travel or break. Anything surface-mounted on it goes too, or it would be
+ * left pointing at a host on another floor. And a `wall` mount names a wall that does
+ * not exist over there, so it is re-seated on the floor — reported, because a shelf
+ * that was on the wall and is now on the ground is worth a sentence rather than a
+ * discovery.
+ */
+export function movePlacementToFloor(placementId: Id, floorId: Id): string | null {
+  const { doc } = useStore.getState();
+  const from = doc.floors.find((f) => f.placements.some((p) => p.id === placementId));
+  if (!from || from.id === floorId) return null;
+  if (!doc.floors.some((f) => f.id === floorId)) return null;
+
+  const moving = descendantsOf(from, placementId);
+  let reseated = 0;
+
+  useStore.getState().mutate('Move to floor', (draft) => {
+    const source = draft.floors.find((f) => f.id === from.id);
+    const target = draft.floors.find((f) => f.id === floorId);
+    if (!source || !target) return;
+
+    const travelling = source.placements.filter((p) => moving.has(p.id));
+    source.placements = source.placements.filter((p) => !moving.has(p.id));
+
+    for (const placement of travelling) {
+      const next = remountForFloor(placement, moving);
+      if (next.reseated) reseated++;
+      placement.floorId = floorId;
+      placement.mount = next.mount;
+      placement.elevation = next.elevation;
+      target.placements.push(placement);
+    }
+  });
+
+  const carried = moving.size - 1;
+  const parts: string[] = [];
+  if (carried > 0) parts.push(`${carried} item${carried === 1 ? '' : 's'} on it moved too`);
+  if (reseated > 0) parts.push(`${reseated} wall mount${reseated === 1 ? '' : 's'} reseated on the floor`);
+  return parts.length > 0 ? `${parts.join('; ')}.` : null;
 }
 
 // ---------------------------------------------------------------------------

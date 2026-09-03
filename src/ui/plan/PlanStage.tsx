@@ -34,6 +34,8 @@ import { flaggedPlacements, validateFloor } from '../../core/validation';
 import { ROTATION_STEP_DEG, snapPlacement } from '../../core/placement-snap';
 import { BackgroundLayer } from './BackgroundLayer';
 import { DraftLayer } from './DraftLayer';
+import { floorBelow } from '../../core/floors';
+import { GhostLayer } from './GhostLayer';
 import { GridLayer } from './GridLayer';
 import { PlacementLayer } from './PlacementLayer';
 import { StructureLayer } from './StructureLayer';
@@ -761,6 +763,9 @@ export function PlanStage() {
         <Layer listening={false}>
           <Rect x={0} y={0} width={stageSize.width} height={stageSize.height} />
         </Layer>
+
+        {/* Under the active floor, and out of the hit graph entirely. */}
+        <GhostLayer floor={floorBelow(doc, doc.activeFloorId)} viewport={viewport} theme={theme} />
 
         <StructureLayer
           floor={floor}

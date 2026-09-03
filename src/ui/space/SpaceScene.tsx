@@ -6,6 +6,8 @@ import { UPRIGHT, extrudePolygon, extrudeSlab } from './geometry';
 
 type Props = {
   scene: SceneModel;
+  /** Only this floor's solids take clicks — see the note in `onClick` below. */
+  activeFloorId: string;
   selection: SelectionRef[];
   showCeilings: boolean;
   onSelect: (ref: SelectionRef, additive: boolean) => void;
@@ -27,7 +29,7 @@ const SELECTED_COLOR = '#2f6fed';
  * number nothing has measured, and the seam for instancing — a scene model that
  * already groups by catalog item — is unchanged by it.
  */
-export function SpaceScene({ scene, selection, showCeilings, onSelect }: Props) {
+export function SpaceScene({ scene, activeFloorId, selection, showCeilings, onSelect }: Props) {
   const solids = useMemo(
     () => scene.solids.map((solid) => ({ solid, geometry: extrudePolygon(solid.outline, solid.span) })),
     [scene],
@@ -77,6 +79,10 @@ export function SpaceScene({ scene, selection, showCeilings, onSelect }: Props) 
             // Only the nearest hit: without this a click passes through a wall and
             // selects everything behind it as well.
             e.stopPropagation();
+            // A solid on another floor is scenery. Selecting it would put something
+            // in the panel that the plan view — which edits one floor — cannot show,
+            // and that the delete key would then remove from a storey you are not on.
+            if (solid.floorId !== activeFloorId) return;
             onSelect({ kind: solid.ref.kind, id: solid.ref.id }, e.nativeEvent.shiftKey);
           }}
         >

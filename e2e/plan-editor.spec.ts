@@ -195,7 +195,7 @@ test.describe('selection', () => {
 
     await selectTool(page, 'Select');
     await clickAt(page, stage, { x: 2000, y: 0 });
-    await page.getByRole('button', { name: 'Delete' }).click();
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
 
     await expect(page.getByTestId('count-walls')).toContainText('3');
     await expect(page.getByTestId('count-rooms')).toContainText('1');

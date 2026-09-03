@@ -1,5 +1,6 @@
 import type { Floor, SpaceDocument } from '../../core/document';
-import { blockersOf, buildScene, type SceneModel } from '../../core/scene';
+import { blockersOf, buildScene, buildStack, type SceneModel } from '../../core/scene';
+import { visibleFloors, type FloorVisibility } from '../../core/floors';
 import type { Volume } from '../../core/geometry/collision';
 
 /**
@@ -29,6 +30,28 @@ export function sceneFor(doc: SpaceDocument, floor: Floor): SceneModel {
   cachedDoc = doc;
   cachedFloorId = floor.id;
   return cachedScene;
+}
+
+let cachedStackDoc: SpaceDocument | null = null;
+let cachedStackKey: string | null = null;
+let cachedStack: SceneModel | null = null;
+
+/**
+ * The stacked scene the space view draws.
+ *
+ * Kept apart from `sceneFor` rather than replacing it, because the walker must keep
+ * being fed the **active floor alone**: collision that followed a display setting
+ * would have you walking into walls you had only chosen to look at. Two consumers,
+ * two scenes, and `blockersFor` is untouched.
+ */
+export function stackFor(doc: SpaceDocument, visibility: FloorVisibility): SceneModel {
+  const key = visibility + ':' + doc.activeFloorId;
+  if (cachedStackDoc === doc && cachedStackKey === key && cachedStack) return cachedStack;
+
+  cachedStack = buildStack(doc, visibleFloors(doc, visibility), doc.activeFloorId);
+  cachedStackDoc = doc;
+  cachedStackKey = key;
+  return cachedStack;
 }
 
 export function blockersFor(doc: SpaceDocument, floor: Floor): Volume[] {

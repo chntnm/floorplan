@@ -34,6 +34,8 @@ export type PlanTheme = {
   dimensionText: string;
   /** Validation warnings — overlaps, headroom. Distinct from selection blue. */
   warning: string;
+  /** The floor below, showing through as an alignment underlay. */
+  ghost: string;
 };
 
 const LIGHT: PlanTheme = {
@@ -58,6 +60,7 @@ const LIGHT: PlanTheme = {
   dimension: '#c8541f',
   dimensionText: '#8a3a14',
   warning: '#c0392b',
+  ghost: 'rgba(80, 80, 96, 0.45)',
 };
 
 const DARK: PlanTheme = {
@@ -82,6 +85,7 @@ const DARK: PlanTheme = {
   dimension: '#e8834a',
   dimensionText: '#f0a878',
   warning: '#e5645a',
+  ghost: 'rgba(190, 190, 210, 0.40)',
 };
 
 const QUERY = '(prefers-color-scheme: dark)';

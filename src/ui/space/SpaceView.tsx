@@ -5,7 +5,7 @@ import { look } from '../../core/walk';
 import { refIsEditable } from '../../core/modes';
 import type { SpaceCamera } from '../../core/views';
 import { activeFloor, useStore, type SelectionRef } from '../../state/store';
-import { sceneFor } from './scene-cache';
+import { stackFor } from './scene-cache';
 import { CameraRig } from './CameraRig';
 import { SpaceHud } from './SpaceHud';
 import { SpaceScene } from './SpaceScene';
@@ -58,13 +58,14 @@ class CanvasBoundary extends Component<{ children: ReactNode }, { failed: boolea
  * the renderer does not. The camera consumes the walker; it never owns it.
  */
 export function SpaceView() {
-  const { doc, editMode, cameraMode, selection, showCeilings } = useStore(
+  const { doc, editMode, cameraMode, selection, showCeilings, floorVisibility } = useStore(
     useShallow((s) => ({
       doc: s.doc,
       editMode: s.editMode,
       cameraMode: s.cameraMode,
       selection: s.selection,
       showCeilings: s.showCeilings,
+      floorVisibility: s.floorVisibility,
     })),
   );
 
@@ -79,7 +80,7 @@ export function SpaceView() {
   useWalkLoop(true);
 
   const floor = activeFloor({ doc });
-  const scene = sceneFor(doc, floor);
+  const scene = stackFor(doc, floorVisibility);
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (cameraMode === 'orbit' || e.button !== 0) return;
@@ -148,6 +149,7 @@ export function SpaceView() {
             />
             <SpaceScene
               scene={scene}
+              activeFloorId={floor.id}
               selection={selection}
               showCeilings={showCeilings}
               onSelect={select}

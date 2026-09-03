@@ -275,8 +275,9 @@ type Room = {
 type Floor = {
   id: string;
   name: string;              // "Ground", "Upstairs", "Basement"
-  index: number;             // stacking order
-  elevationMm: number;       // datum of this floor above building zero
+  index: number;             // stacking order — see §11.2; array order is insertion order
+  elevationMm: number;       // datum of this floor above building zero, signed
+  defaultCeilingHeightMm: number;  // for placements outside every traced room
   walls: Wall[];
   openings: Opening[];
   rooms: Room[];
@@ -776,6 +777,96 @@ a toggle for showing all floors, the active floor only, or a cutaway.
 The catalog is shared document-wide; placements reference their `floorId`. Moving a
 placement between floors is an explicit action, not a drag.
 
+### 11.1 Detection
+
+Wall centrelines form a planar graph once they are split at every crossing **and every
+T-junction**; its faces are found by the standard half-edge walk, keeping the first edge
+clockwise from the way back. Interior faces come out with positive signed area and each
+connected component's outer face negative, and **that sign is the test** — not "discard
+the biggest", which gets a courtyard backwards, because the outer face of an inner ring
+of walls is smaller than the room around it.
+
+The T-junction split is the one that decides whether detection works on a real plan. A
+partition drawn to butt into the middle of another wall has its endpoint on that wall's
+*interior*; with no node there the graph has no branch and the walk hands back the
+single loop around the outside.
+
+**Boundaries are centrelines**, matching `commitRoomRect`, so a drawn room and a
+detected one describe the same walls with the same number. Insetting by half a
+thickness would be nearer the floor area you could carpet and would make the two paths
+disagree about every room drawn by hand. Rings are canonicalised to start at their
+lowest corner, which is what makes a second run a genuine no-op rather than a rewrite
+of every boundary in the document.
+
+**Detection adds and updates; it never deletes.** An Area-tool room has no walls at all
+— that is the point of `commitShapeRoom` — so removing rooms with no supporting loop
+would delete a legitimate one on every run. Unmatched rooms are reported and left
+alone. Reporting them as a *validation issue* was considered and rejected for the same
+reason: it would flag every shape room forever, which is noise, not a finding.
+
+Matching is by **overlap area**, greedily, largest first. Centroid containment is
+cheaper and breaks where it matters: partition a room and the old centroid may land in
+either half, or inside the partition. Overlap gives the larger half the old name — the
+one a person would still call the living room — and the smaller half becomes a new room.
+
+A detected room is a **simple ring**. `Polygon` has no holes, so an island of walls
+inside a room does not punch one: a courtyard is detected as its own room *and* left
+inside the ring around it.
+
+### 11.2 The stack
+
+`index` is the stacking order and the array is insertion order. Two places to look for
+one answer, so `orderedFloors` is the only thing that sorts and nothing else reads array
+position — which matters the first time someone adds a basement, because it takes index
+−1 and is appended, and the two orders disagree permanently from then on.
+
+A new floor's elevation is **suggested, not derived**: the floor below it plus that
+floor's tallest ceiling plus `FLOOR_ASSEMBLY_MM`. It is then an ordinary editable signed
+number, because a split level, a mezzanine and a garage half a storey down are all real
+and none of them survive a formula. Floors are added at the ends only; inserting between
+two would renumber every floor above and make one gesture an edit to the whole building.
+
+Switching floors writes `activeFloorId` **without recording history**. Undo has to walk
+back the edits you made; having it teleport you between storeys instead would make the
+stack unusable. It still marks the document dirty, because reopening a three-storey
+house on the floor you left it is why the field is in the document rather than in the
+editor. The same switch clears the selection, the draft, any drag in progress and the
+walkway route — `pruneSelection` would keep all of them, since a wall on the floor below
+still exists perfectly well.
+
+Moving a placement between floors carries **everything standing on it**, however deep,
+or a surface mount is left pointing at a host on another floor — which `findPlacement`
+resolves happily, into an elevation measured against the wrong datum. A `wall` mount
+names a wall that does not exist over there and is re-seated on the floor, reported
+rather than discovered. Deleting a floor performs the same repair for anything elsewhere
+mounted onto it, and refuses the last floor outright.
+
+### 11.3 What each view does with the stack
+
+The plan view draws the floor below as an underlay that **participates in nothing**:
+`listening={false}`, absent from the wall and room counts, and absent from `floorBounds`
+and therefore from zoom-to-fit. That last one is what keeps the viewport still across a
+floor change, without which aligning an upstairs wall over the one holding it up would
+be impossible. The `listening` flag is load-bearing and not merely tidy: PlanStage reads
+a click as empty canvas by `e.target === stage`, and that is what clears the selection
+and starts a pan.
+
+The space view stacks floors for real, each built by `buildScene` in its own frame and
+shifted by its elevation relative to the active floor's datum — so the active floor
+keeps the coordinates the rest of the application uses. `active` shows it alone, `all`
+shows the building, and `cutaway` is named for what it removes: the floors above, which
+are otherwise a lid. Other floors are dimmed, lose their ceilings (the slab above is the
+ceiling) and **do not take clicks**, since selecting one would put something in the
+panel that the plan view cannot show and the delete key would then remove from a storey
+you are not on.
+
+**Collision always comes from the active floor**, whatever the display toggle says.
+Feeding the stack to the walker would make traversal depend on a view setting — and
+since floors default to `elevationMm: 0`, a second floor added before its elevation is
+set would put you inside the walls of a storey you were only looking at. Two questions,
+one of which includes things the other does not; the same shape of split as clearance
+and the walkway probe in §9.3.
+
 ---
 
 ## 12. Phasing
@@ -787,13 +878,13 @@ isolated so neither blocks the core editor.
 |-------|-------------|
 | **0** | Scaffold: Vite + React + TS, vitest, playwright, lint, CI. Empty app shell. |
 | **1** | **Geometry core** — units, mm integers, polygon primitive, all generators, rotation/transform, area, SAT + clipping overlap, vertical intervals. Pure functions, no UI, heavily tested. Document model + `.space` read/write + migration hook. Round-trips a hand-authored fixture. |
-| **2** | **Plan editor** — Konva stage, pan/zoom, wall/room/shape tools, dimension tool, grid + snapping, selection and transform (wall endpoint and body drag), mode toggle, undo/redo. Draw a floor plan by hand and save it. Room *reposition* is deliberately not included: rooms and their walls are separate entities, and moving one without the other desynchronises them — redraw instead until phase 8 relates them. |
+| **2** | **Plan editor** — Konva stage, pan/zoom, wall/room/shape tools, dimension tool, grid + snapping, selection and transform (wall endpoint and body drag), mode toggle, undo/redo. Draw a floor plan by hand and save it. Room *reposition* is deliberately not included: rooms and their walls are separate entities, and moving one without the other desynchronises them — redraw instead until phase 8 relates them. **Phase 8 kept half of this.** Detection is the relating mechanism: a boundary derived from the wall graph re-derives when the walls move, so the way to reposition a room is now to move its walls and press Detect rooms, which reshapes the room in place and keeps its name and ceiling. Dragging a room boundary directly is still not implemented and is no longer planned for v1 — it is the gesture that desynchronises, and the one that does not now exists. |
 | **3** | **Import + calibration** — PDF via pdfjs (dynamically imported, so the 437kB renderer stays off first paint), image import, the blocking calibration gate, background transform/opacity/lock, tracing over a real plan. An uncalibrated background is shown at a nominal 6m width so the reference line is drawable *and* so the transform is invertible before a real scale exists; calibrating rescales about `refA` so the point the user anchored on does not move, and `transform.position` stays a float because rounding it would drift the anchor on every recalibration. Import deliberately does not re-fit the viewport. Deferred: thumbnails and File System Access (phase 9), vector path extraction (v2). |
 | **4** | **Inventory** — catalog/placement split, manual entry, preset library, quantity tracking, placement onto the plan with wall snap, surface snap, rotation, and 3D overlap warnings. **First genuinely useful build.** Wall snap seats the footprint's *back edge* (local −y) on the wall's near face and rotates to match, never the centre on the centreline. The calibration gate stops being decorative here: `addPlacement` throws `PlacementBlockedError` carrying the same sentence the validation panel shows, and the Place button is disabled rather than offered-and-refused. Deleting a placement re-seats anything surface-mounted on it, so the document never references a host that is gone. Headroom arrives early — `exceedsHeadroom` already existed — but clearance zones (7) and door swing (6) are still out. |
 | **5** | **3D space view** — extrusion from document geometry, orbit mode, walk mode with arrow-key traversal and collision, mount types (floor/surface/wall/ceiling), elevation editing, headroom checks, saved views. **Includes opening *geometry*** — wall-hosted openings and the holes they cut in the extruded walls, without swing. A sealed walker who cannot leave the first room does not demonstrate traversal, so the doorways have to exist here. An opening cuts a wall in *elevation*, not in plan, so `ExtrudeGeometry` holes were never the answer: `wallSegments` **splits** the wall into the solid boxes that remain — flank, sill wall, lintel, flank — which needs no CSG and hands the same list to the renderer, the walker and the validation panel. A doorway is passable because the only solid above it starts at 2032mm, with no "is this a door" check anywhere in traversal. The walk simulation deliberately lives *outside* three.js: a plain rAF loop over pure functions, so the camera consumes the walker rather than owning it, the position readout survives a browser with no WebGL, and traversal is testable without a GPU. Deferred and stated rather than claimed: **instancing** (§10.4's 500-at-60fps target is unmeasured — one mesh per solid today), and a real contact-normal collision resolver (moves are retried per axis, so diagonal walls slide stickily). |
 | **6** | **Openings, complete** — swing arcs in 2D, hinged door panels and window panes in 3D, sliding/pocket/cased variants, swing-vs-object clearance. The five kinds behave in four different ways, and the difference is the reason the kinds exist: hinged doors need their swept sector clear, sliders need the wall they park over clear, pocket doors need **nothing** in the room clear and instead need a cavity that can exist, and cased openings and windows need nothing at all. The swept sector is computed once and serves three consumers — its boundary *is* the 2D door symbol (closed leaf, arc, open leaf), it is the clearance polygon, and it positions the 3D panel — so the drawing and the check cannot disagree about where the door goes. Hanging the leaf is done with **flip buttons, not selects**, because there is no honest label for the two sides of a wall; the arc in the drawing is what makes the choice legible. The angle field holds its text locally and commits on blur or Enter, like the room name and every length field: writing per keystroke to a value that is *clamped* means the `1` of `135` is stored as `15` and the rest of the number is typed against that, so no angle whose first digit falls below the floor can be entered at all. `fill()` in a test never sees it, because it delivers the whole value in one change event. Deferred and stated rather than claimed: **windows do not open** (a casement sash would swing like a door and is not built), and the 3D layer-toggle gate on a door leaf is covered by an exhaustive unit test over `refIsEditable` rather than end to end — in the orbit view a leaf is a slab a few pixels wide seen edge-on, and walk mode does not take selection clicks at all, so hunting for it with a grid of clicks would test where the camera happens to sit. |
 | **7** | **Clearance and circulation** — clearance zones on catalog items, the standard preset library, walkway width probe, consolidated validation panel across overlap/headroom/clearance/swing. Two checks that sound alike and are not: a zone asks whether a drawer opens, the probe asks whether a person fits, and they differ on whether walls count (see §9.3 — they do not for a zone, they do for the probe). Zones are drawn on the selected item only, for the reason the swing arc is drawn: a warning that says "the bookcase blocks the drawer pull" is an argument and the hatched rectangle is the evidence — but six dining chairs with pull-out zones would carpet the floor in hatching and say nothing. The probe stores the *route*, not the number, so it re-answers as furniture moves; the tool stays live in furnish mode for the same reason. The panel groups by what you would do about a problem rather than by the issue enum, keeping `validateFloor`'s blocking-first order rather than forming a second opinion about severity in the component least qualified to have one. Deferred and stated rather than claimed: **the 900mm probe height in §9.3 was wrong and is now a body interval** — a sofa back is 840mm, so the specified ray passed over the one piece of furniture the spec named; and the full medial-axis navmesh remains explicitly out of scope, so the probe reports the narrowest gap *at a sample*, not the true infimum. |
-| **8** | **Multi-room and multi-floor** — room detection and areas, per-room ceiling heights, floor stacking, ghost underlay, 3D floor toggles. |
+| **8** | **Multi-room and multi-floor** — room detection and areas, per-room ceiling heights, floor stacking, ghost underlay, 3D floor toggles. Detection keeps planar-graph faces **by sign** rather than by magnitude, because a courtyard's outer face is smaller than the room around it; and it splits walls at T-junctions as well as crossings, which is the pass that decides whether it works on a real plan at all. Boundaries are centrelines, matching the Room tool, and rings are canonicalised so a second run is a genuine no-op — both asserted, because two paths that describe the same walls with different numbers is the failure this phase exists to avoid. Detection **never deletes**: an Area-tool room has no walls by design, so removing what detection cannot see would delete a legitimate room every run; unmatched rooms are reported and left. Ceiling height became editable, which is what makes it worth having — the headroom check reads it through `ceilingHeightAt`. On the stack: `index` is the ordering and nothing reads array position, a floor switch is silent in history but dirty on disk, and moving a placement carries everything standing on it while re-seating what named a wall it left behind. The plan ghost participates in nothing — not the hit graph, not the counts, not `floorBounds` — and the `listening` flag is load-bearing rather than tidy, since PlanStage reads empty canvas by `e.target === stage`. **Collision stays on the active floor whatever the 3D toggle says**, the same two-questions split as §9.3. Deferred and stated rather than claimed: room-boundary dragging is dropped for v1 in favour of move-the-walls-and-re-detect (see row 2), floors can only be added at the ends of the stack, and a detected room is a simple ring — an island of walls inside one does not punch a hole in it. |
 | **9** | **Polish and portability** — File System Access save-in-place, IndexedDB autosave and recovery, thumbnails, product URL lookup endpoint + confirm dialog, export/import e2e, migration tests. |
 
 Phases 4 and 5 together are the point at which the application does what it exists to

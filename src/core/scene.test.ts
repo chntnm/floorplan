@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { blockersOf, buildScene, defaultStandpoint } from './scene';
+import { OTHER_FLOOR_OPACITY, blockersOf, buildScene, buildStack, defaultStandpoint } from './scene';
 import { createOpening } from './openings';
 import { createCatalogItem, type ItemDraft } from './catalog';
 import { commitRoomRect } from './tools';
-import { createDocument, type Placement, type SpaceDocument } from './document';
+import { createDocument, createFloor, type Placement, type SpaceDocument } from './document';
 
 let seq = 0;
 const id = () => `id-${seq++}`;
@@ -235,5 +235,96 @@ describe('leaves in the scene', () => {
     const { leaf } = withOpening('sliding');
     expect(leaf).toBeDefined();
     expect(leaf!.blocking).toBe(false);
+  });
+});
+
+describe('stacking floors', () => {
+  /** The 5 x 4 room, plus an identical one on a floor 2738mm up. */
+  function twoStorey(): SpaceDocument {
+    const doc = room();
+    const upstairs = createFloor('up', 'Upstairs', 1);
+    upstairs.elevationMm = 2738;
+    const built = commitRoomRect({ x: 0, y: 0 }, { x: 5000, y: 4000 }, {
+      name: 'Bedroom',
+      makeId: id,
+    })!;
+    upstairs.rooms.push(built.room);
+    upstairs.walls.push(...built.walls);
+    doc.floors.push(upstairs);
+    return doc;
+  }
+
+  it('shifts a floor by its elevation relative to the active datum', () => {
+    const doc = twoStorey();
+    const stack = buildStack(doc, doc.floors, 'f');
+
+    const ground = stack.solids.filter((s) => s.floorId === 'f');
+    const up = stack.solids.filter((s) => s.floorId === 'up');
+    expect(ground[0]!.span.bottom).toBe(0);
+    expect(up[0]!.span.bottom).toBe(2738);
+  });
+
+  it('leaves the active floor where the rest of the application put it', () => {
+    // Whichever floor is active keeps the coordinates the plan view, the walker and
+    // every collision test already use — the stack shifts the others around it.
+    const doc = twoStorey();
+    const stack = buildStack(doc, doc.floors, 'up');
+
+    expect(stack.solids.find((s) => s.floorId === 'up')!.span.bottom).toBe(0);
+    expect(stack.solids.find((s) => s.floorId === 'f')!.span.bottom).toBe(-2738);
+  });
+
+  it('dims every floor that is not the one being edited', () => {
+    const doc = twoStorey();
+    const stack = buildStack(doc, doc.floors, 'f');
+
+    expect(stack.solids.find((s) => s.floorId === 'f')!.opacity).toBe(1);
+    expect(stack.solids.find((s) => s.floorId === 'up')!.opacity).toBe(OTHER_FLOOR_OPACITY);
+  });
+
+  it('drops the ceiling of a floor that has another floor over it', () => {
+    // The slab above is the ceiling. A lid on every storey hides the stack, which is
+    // the whole point of looking at more than one.
+    const doc = twoStorey();
+    const stack = buildStack(doc, doc.floors, 'f');
+
+    expect(stack.slabs.filter((s) => s.floorId === 'up' && s.kind === 'ceiling')).toEqual([]);
+    expect(stack.slabs.filter((s) => s.floorId === 'f' && s.kind === 'ceiling')).toHaveLength(1);
+  });
+
+  it('frames every floor it shows, not just the active one', () => {
+    // `bounds` feeds the orbit camera. Fitting one storey clips the rest.
+    const doc = twoStorey();
+    const upstairs = doc.floors[1]!;
+    for (const wall of upstairs.walls) {
+      wall.a = { x: wall.a.x + 9000, y: wall.a.y };
+      wall.b = { x: wall.b.x + 9000, y: wall.b.y };
+    }
+    upstairs.rooms = [];
+
+    expect(buildStack(doc, doc.floors, 'f').bounds!.maxX).toBeGreaterThan(13_000);
+  });
+
+  it('keeps ids unique across floors', () => {
+    // Two floors traced from the same template can carry the same wall ids; React
+    // keys and three.js meshes both need them distinct.
+    const doc = twoStorey();
+    doc.floors[1]!.walls = doc.floors[0]!.walls.map((w) => ({ ...w }));
+    const stack = buildStack(doc, doc.floors, 'f');
+
+    expect(new Set(stack.solids.map((s) => s.id)).size).toBe(stack.solids.length);
+  });
+
+  it('is only what you see — the walker is fed the active floor alone', () => {
+    // Floors default to elevationMm 0, so a second floor added before its elevation
+    // is set puts both storeys' walls in the same band. Feeding the stack to
+    // collision would have you walking into walls you are only looking at.
+    const doc = twoStorey();
+    doc.floors[1]!.elevationMm = 0;
+
+    const active = buildScene(doc, doc.floors[0]!);
+    expect(blockersOf(active).length).toBeLessThan(
+      blockersOf(buildStack(doc, doc.floors, 'f')).length,
+    );
   });
 });

@@ -19,7 +19,14 @@ import {
   setRoomName,
   setRoomCeilingHeight,
   detectFloorRooms,
+  addFloor,
+  deleteFloor,
+  movePlacementToFloor,
+  renameFloor,
+  setFloorCeilingHeight,
+  setFloorElevation,
 } from '../state/actions';
+import { floorBelow, orderedFloors } from '../core/floors';
 import { findItem, type Floor, type SpaceDocument } from '../core/document';
 import { resolveElevation, roomAt, surfaceHeight } from '../core/placement';
 import { ROTATION_STEP_DEG } from '../core/placement-snap';
@@ -154,6 +161,116 @@ function OpeningSwing({ opening }: { opening: Opening }) {
           onCommit={(deg) => setOpeningSwing(opening.id, { angleDeg: deg })}
           testId="swing-angle"
         />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The active floor's own properties, and the shape of the stack.
+ *
+ * Switching floors is in the top bar with the view controls; this is where a floor is
+ * named, given a datum and removed. The split is between navigation and property, not
+ * between two views of the same thing.
+ *
+ * Elevation is editable and signed rather than derived from the stack. A split level,
+ * a mezzanine and a garage half a storey down are all real buildings, and none of them
+ * survive a formula — so the formula only supplies the opening guess when a floor is
+ * created.
+ */
+function FloorProperties({ editable }: { editable: boolean }) {
+  const { doc, floorId } = useStore(
+    useShallow((s) => ({ doc: s.doc, floorId: s.doc.activeFloorId })),
+  );
+  const floor = activeFloor({ doc });
+  const unit = doc.displayUnit;
+  const [error, setError] = useState<string | null>(null);
+
+  const [draft, setDraft] = useState(floor.name);
+  useEffect(() => setDraft(floor.name), [floorId, floor.name]);
+
+  const below = floorBelow(doc, floorId);
+
+  return (
+    <div data-testid="floor-properties">
+      <label className="field field--input">
+        <span className="field__label">Name</span>
+        <input
+          value={draft}
+          aria-label="Floor name"
+          disabled={!editable}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            const next = draft.trim();
+            if (next && next !== floor.name) renameFloor(floorId, next);
+            else setDraft(floor.name);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') {
+              setDraft(floor.name);
+              e.currentTarget.blur();
+            }
+          }}
+        />
+      </label>
+      <LengthInput
+        label="Datum"
+        valueMm={floor.elevationMm}
+        unit={unit}
+        testId="floor-elevation"
+        onCommit={(mm) => setFloorElevation(floorId, mm)}
+      />
+      {/* Used by every placement that falls outside a traced room, and the height a
+          new floor above this one is stacked to clear. */}
+      <LengthInput
+        label="Ceiling"
+        valueMm={floor.defaultCeilingHeightMm}
+        unit={unit}
+        testId="floor-ceiling"
+        onCommit={(mm) => setFloorCeilingHeight(floorId, mm)}
+      />
+      <Field label="Below" value={below ? below.name : 'nothing — this is the bottom'} />
+
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="add-floor-above"
+          disabled={!editable}
+          onClick={() => {
+            setError(null);
+            addFloor('above');
+          }}
+        >
+          Add above
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-testid="add-floor-below"
+          disabled={!editable}
+          onClick={() => {
+            setError(null);
+            addFloor('below');
+          }}
+        >
+          Add below
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-testid="delete-floor"
+          disabled={!editable}
+          onClick={() => setError(deleteFloor(floorId))}
+        >
+          Delete floor
+        </button>
+      </div>
+      {error ? (
+        <p className="panel__warn" role="alert" data-testid="floor-error">
+          {error}
+        </p>
       ) : null}
     </div>
   );
@@ -487,6 +604,27 @@ export function PropertiesPanel() {
             />
           ) : null}
 
+          {/* Explicit, per PLAN §11: the plan view shows one floor, so there is
+              nowhere to drag to, and a gesture that silently changed storeys would be
+              indistinguishable from a nudge. */}
+          {doc.floors.length > 1 ? (
+            <label className="field field--input">
+              <span className="field__label">Floor</span>
+              <select
+                value={floor.id}
+                aria-label="Move to floor"
+                data-testid="move-to-floor"
+                onChange={(e) => setMountError(movePlacementToFloor(placement.id, e.target.value))}
+              >
+                {[...orderedFloors(doc)].reverse().map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           <div className="panel__row panel__row--rotate">
             <button
               type="button"
@@ -626,6 +764,9 @@ export function PropertiesPanel() {
           </div>
         </div>
       ) : null}
+
+      <h2 className="panel__heading">Floor</h2>
+      <FloorProperties editable={structureIsEditable(editMode)} />
 
       <h2 className="panel__heading">Rooms</h2>
       <RoomDetection editable={structureIsEditable(editMode)} />

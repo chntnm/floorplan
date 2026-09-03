@@ -37,6 +37,7 @@ import {
   type WallDefaults,
 } from '../core/tools';
 import type { EditMode, ViewMode } from '../core/modes';
+import type { FloorVisibility } from '../core/floors';
 import { bounds, type Bounds } from '../core/geometry/polygon';
 import { wallOutline } from '../core/geometry/wall';
 import type { Vec2 } from '../core/geometry/vec';
@@ -68,6 +69,22 @@ export type MutateOptions = {
    * set it on anything that splices an array.
    */
   coalesce?: boolean;
+  /**
+   * Write the document without recording history.
+   *
+   * For a document field that records *where you are*, not what the space is —
+   * `activeFloorId` is the only one. Undo has to walk back the edits you made; having
+   * it teleport you between storeys instead would make the stack unusable. The change
+   * still marks the document dirty, because it still has to be saved: reopening a
+   * three-storey house on the floor you left it is the whole reason the field is in
+   * the document rather than in the editor.
+   *
+   * Only safe for an **absolute write at a fixed path**, the same constraint
+   * `coalesce` carries, and for the same reason: the patches already on the stack are
+   * replayed against whatever the document is now, so a silent write that spliced an
+   * array would leave every one of them pointing at the wrong index.
+   */
+  silent?: boolean;
 };
 
 export type HistoryEntry = {
@@ -214,6 +231,8 @@ export type StoreState = {
   walker: Walker | null;
   /** Ceilings hide by default — a dollhouse you cannot see into is not useful. */
   showCeilings: boolean;
+  /** Which floors the space view draws. Display only — collision is always the active floor. */
+  floorVisibility: FloorVisibility;
   /**
    * A camera pose the 3D view should jump to, consumed once and cleared.
    *
@@ -254,6 +273,8 @@ export type StoreState = {
   setCameraMode: (mode: CameraMode) => void;
   setWalker: (walker: Walker | null) => void;
   setShowCeilings: (on: boolean) => void;
+  setFloorVisibility: (visibility: FloorVisibility) => void;
+  setActiveFloor: (floorId: Id) => void;
   setPendingCamera: (camera: SpaceCamera | null) => void;
   setNotice: (notice: string | null) => void;
   applySavedView: (view: SavedView) => void;
@@ -326,6 +347,11 @@ export const useStore = create<StoreState>((set, get) => ({
     // The timestamp always changes, so it cannot be the test for "did anything
     // happen" — a recipe that turned out to be a no-op must not land on the stack.
     if (patches.every((p) => p.path[0] === 'modifiedAt')) return;
+
+    if (options?.silent) {
+      set({ doc: next, dirty: true, selection: pruneSelection(next, state.selection) });
+      return;
+    }
 
     const previous = state.past[state.past.length - 1];
     // Keep the older entry's inverse: undo has to reach the state before the whole
@@ -466,6 +492,7 @@ export const useStore = create<StoreState>((set, get) => ({
   cameraMode: 'orbit',
   walker: null,
   showCeilings: false,
+  floorVisibility: 'active',
   pendingCamera: null,
   notice: null,
 
@@ -521,6 +548,41 @@ export const useStore = create<StoreState>((set, get) => ({
   setCameraMode: (cameraMode) => set({ cameraMode }),
   setWalker: (walker) => set({ walker }),
   setShowCeilings: (showCeilings) => set({ showCeilings }),
+  setFloorVisibility: (floorVisibility) => set({ floorVisibility }),
+
+  /**
+   * Change which floor everything is addressing.
+   *
+   * Silent, so undo walks back edits rather than storeys. Everything that names
+   * something on the old floor goes with it: a selection, a half-drawn wall chain, a
+   * drag in progress, a walkway route measured through rooms you are no longer
+   * looking at. `pruneSelection` alone would not do it — it drops what no longer
+   * exists, and a wall on the floor below still exists perfectly well.
+   */
+  setActiveFloor: (floorId) => {
+    const { doc } = get();
+    if (doc.activeFloorId === floorId) return;
+    if (!doc.floors.some((f) => f.id === floorId)) return;
+
+    get().mutate(
+      'Active floor',
+      (draft) => {
+        draft.activeFloorId = floorId;
+      },
+      { silent: true },
+    );
+    set({
+      selection: [],
+      draft: null,
+      transform: null,
+      placementTransform: null,
+      placingItemId: null,
+      walkway: null,
+      walker: null,
+      cursor: null,
+      snapHints: [],
+    });
+  },
   setPendingCamera: (pendingCamera) => set({ pendingCamera }),
   setNotice: (notice) => set({ notice }),
 
