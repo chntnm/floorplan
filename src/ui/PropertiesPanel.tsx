@@ -17,6 +17,8 @@ import {
   setBackgroundOpacity,
   setPlacementElevation,
   setRoomName,
+  setRoomCeilingHeight,
+  detectFloorRooms,
 } from '../state/actions';
 import { findItem, type Floor, type SpaceDocument } from '../core/document';
 import { resolveElevation, roomAt, surfaceHeight } from '../core/placement';
@@ -158,6 +160,54 @@ function OpeningSwing({ opening }: { opening: Opening }) {
 }
 
 /**
+ * Derive rooms from the walls that enclose them.
+ *
+ * A button rather than something that runs on every wall edit. Detection renames and
+ * re-shapes rooms, and doing that continuously while a wall chain is half drawn would
+ * fight the person drawing it — a partition is briefly a spur, and a room briefly two.
+ * Asking is also what makes it one undo step you can reverse.
+ *
+ * The report is worth showing rather than swallowing, because "found nothing" and
+ * "found what was already there" are different answers to the same click.
+ */
+function RoomDetection({ editable }: { editable: boolean }) {
+  const [report, setReport] = useState<string | null>(null);
+  const roomCount = useStore((s) => activeFloor(s).rooms.length);
+
+  const run = () => {
+    const result = detectFloorRooms();
+    const parts: string[] = [];
+    if (result.added.length > 0) parts.push(`${result.added.length} new`);
+    if (result.updated.length > 0) parts.push(`${result.updated.length} reshaped`);
+    if (result.unmatched.length > 0) parts.push(`${result.unmatched.length} with no walls`);
+    setReport(parts.length > 0 ? parts.join(', ') : 'No change — every enclosed loop is already a room.');
+  };
+
+  return (
+    <div data-testid="room-detection">
+      <Field label="Traced" value={String(roomCount)} />
+      <div className="panel__row">
+        <button
+          type="button"
+          className="btn"
+          data-testid="detect-rooms"
+          disabled={!editable}
+          title={editable ? undefined : 'Structure is locked in furnish mode.'}
+          onClick={run}
+        >
+          Detect rooms
+        </button>
+      </div>
+      {report ? (
+        <p className="panel__empty" data-testid="detect-report">
+          {report}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * The walkway probe's answer, and a way to be rid of it.
  *
  * Not a validation issue, because the route is not part of the document — nobody
@@ -286,7 +336,17 @@ export function PropertiesPanel() {
             />
           </label>
           <Field label="Area" value={formatArea(room.areaMm2, unit)} />
-          <Field label="Ceiling" value={formatLength(room.ceilingHeightMm, unit)} />
+          {/* Editable, because it is the one room property with a consequence: the
+              headroom check reads it through `ceilingHeightAt`, so lowering a
+              basement to 2100 immediately reports the wardrobe that no longer
+              fits. */}
+          <LengthInput
+            label="Ceiling"
+            valueMm={room.ceilingHeightMm}
+            unit={unit}
+            testId="room-ceiling"
+            onCommit={(mm) => setRoomCeilingHeight(room.id, mm)}
+          />
           <Field label="Vertices" value={String(room.boundary.pts.length)} />
         </div>
       ) : null}
@@ -566,6 +626,9 @@ export function PropertiesPanel() {
           </div>
         </div>
       ) : null}
+
+      <h2 className="panel__heading">Rooms</h2>
+      <RoomDetection editable={structureIsEditable(editMode)} />
 
       <h2 className="panel__heading">Walkway</h2>
       <WalkwayReadout unit={unit} />

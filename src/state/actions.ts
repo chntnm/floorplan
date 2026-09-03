@@ -18,6 +18,7 @@ import type {
   Wall,
 } from '../core/document';
 import { createOpening, type OpeningDefaults } from '../core/openings';
+import { detectRooms, type RoomDetection } from '../core/rooms';
 import { DEFAULT_SWING, clampSwingAngle, type Swing } from '../core/swing';
 import { nearestWall, projectOntoWall } from '../core/geometry/wall';
 import { createSavedView, uniqueViewName, type SpaceCamera } from '../core/views';
@@ -257,6 +258,48 @@ export function setRoomName(roomId: string, name: string): void {
       if (room) room.name = name;
     }
   });
+}
+
+export function setRoomCeilingHeight(roomId: string, heightMm: number): void {
+  useStore.getState().mutate('Ceiling height', (draft) => {
+    for (const floor of draft.floors) {
+      const room = floor.rooms.find((r) => r.id === roomId);
+      if (room) room.ceilingHeightMm = Math.max(1, Math.round(heightMm));
+    }
+  });
+}
+
+/**
+ * Derive rooms from the walls that enclose them.
+ *
+ * One undo step for the whole sweep, and a no-op when nothing changed — `detectRooms`
+ * omits rooms whose boundary already matches, so re-running on a settled plan writes
+ * no patches at all and `mutate` drops it before it reaches the history stack.
+ *
+ * Returns what it found so the caller can say so. Unmatched rooms are **left alone**:
+ * an Area-tool room has no walls by design, and deleting what detection cannot see
+ * would remove a legitimate room on every run.
+ */
+export function detectFloorRooms(): RoomDetection {
+  const { doc } = useStore.getState();
+  const floorId = doc.activeFloorId;
+  const floor = doc.floors.find((f) => f.id === floorId);
+  if (!floor) return { updated: [], added: [], unmatched: [] };
+
+  const result = detectRooms(floor, { makeId: newId });
+  if (result.updated.length === 0 && result.added.length === 0) return result;
+
+  withActiveFloor('Detect rooms', (f) => {
+    for (const change of result.updated) {
+      const room = f.rooms.find((r) => r.id === change.roomId);
+      if (!room) continue;
+      room.boundary = change.boundary;
+      room.areaMm2 = change.areaMm2;
+    }
+    f.rooms.push(...result.added.map((room) => ({ ...room })));
+  });
+
+  return result;
 }
 
 /**

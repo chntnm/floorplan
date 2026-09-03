@@ -66,7 +66,7 @@ test.describe('drawing', () => {
 
   test('picks up tools by keyboard shortcut', async ({ page }) => {
     await page.keyboard.press('w');
-    await expect(page.getByRole('button', { name: 'Wall' })).toHaveAttribute(
+    await expect(page.getByRole('button', { name: 'Wall', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
@@ -126,7 +126,7 @@ test.describe('mode toggle', () => {
     await expect(page.getByTestId('count-walls')).toContainText('4');
 
     await page.getByRole('button', { name: 'Arrange furniture' }).click();
-    await expect(page.getByRole('button', { name: 'Wall' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Wall', exact: true })).toBeDisabled();
 
     // A click that would have hit a wall in plan mode selects nothing here.
     await clickAt(page, stage, { x: 2000, y: 0 });
