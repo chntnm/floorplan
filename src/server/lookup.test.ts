@@ -174,6 +174,74 @@ describe('resolving before connecting', () => {
   });
 });
 
+describe('pinning the socket to what was checked', () => {
+  /**
+   * The window between the two lookups is DNS rebinding, and it is the guard with no
+   * visible output: a connection that re-resolves the name returns the same page as one
+   * that does not, right up until the day it returns the metadata endpoint instead. So
+   * what is asserted is the handover — the addresses the resolver validated are the ones
+   * the transport is given to connect to.
+   */
+  it('hands the transport the addresses the resolver validated', async () => {
+    let pinned: string[] | null | undefined;
+    const result = await lookupProduct(
+      'https://shop.example.com/p',
+      deps({
+        resolve: () => Promise.resolve(['93.184.216.34', '93.184.216.35']),
+        fetch: (_url, _init, addresses) => {
+          pinned = addresses;
+          return Promise.resolve(html());
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    // Both, not just the first: a host with one dead address still has to fail over.
+    expect(pinned).toEqual(['93.184.216.34', '93.184.216.35']);
+  });
+
+  it('re-pins on the address of the host it was redirected to', async () => {
+    // A redirect changes the host, so a pin computed once for the URL the user typed
+    // would be the wrong pin for the hop that actually gets read.
+    const pinned: (string[] | null)[] = [];
+    await lookupProduct(
+      'https://shop.example.com/p',
+      deps({
+        resolve: (hostname) =>
+          Promise.resolve(hostname === 'shop.example.com' ? ['93.184.216.34'] : ['93.184.216.99']),
+        fetch: (url, _init, addresses) => {
+          pinned.push(addresses);
+          return Promise.resolve(
+            url === 'https://shop.example.com/p'
+              ? new Response(null, { status: 302, headers: { location: 'https://cdn.example.com/p' } })
+              : html(),
+          );
+        },
+      }),
+    );
+
+    expect(pinned).toEqual([['93.184.216.34'], ['93.184.216.99']]);
+  });
+
+  it('pins nothing where there was nothing to resolve', async () => {
+    // The edge runtime again. There is no second lookup to disagree with the first, so
+    // there is no window — and `null` is what says so rather than an empty list, which
+    // would read as "connect to none of these".
+    let pinned: string[] | null | undefined;
+    await lookupProduct(
+      'https://shop.example.com/p',
+      deps({
+        resolve: null,
+        fetch: (_url, _init, addresses) => {
+          pinned = addresses;
+          return Promise.resolve(html());
+        },
+      }),
+    );
+    expect(pinned).toBeNull();
+  });
+});
+
 describe('redirects', () => {
   it('revalidates every hop, not just the URL that was typed', async () => {
     // The standard way past a check that only looks at the first URL: answer the
