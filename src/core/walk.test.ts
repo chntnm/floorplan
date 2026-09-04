@@ -15,12 +15,15 @@ import {
   lookTarget,
   normalizeHeading,
   rightVector,
+  slide,
   stepWalker,
   type WalkInput,
   type Walker,
   type WalkWorld,
 } from './walk';
 import { blockersOf, buildScene } from './scene';
+import type { Volume } from './geometry/collision';
+import { polygon } from './geometry/polygon';
 import { createOpening, type OpeningDefaults } from './openings';
 import { createCatalogItem, type ItemDraft } from './catalog';
 import { commitRoomRect } from './tools';
@@ -330,6 +333,62 @@ describe('sliding', () => {
 
     expect(after.position.x).toBeGreaterThan(2500);
     expect(after.position.y).toBeGreaterThan(0);
+  });
+
+  /**
+   * A surface running north-east: the hypotenuse of a triangle filling everything
+   * south-east of the line y = x. The walker stands clear of it and walks due east,
+   * straight into it.
+   *
+   * This is the case neither axis can answer. Moving on x alone is the move that was
+   * blocked; moving on y alone is not the direction of travel and lands exactly where
+   * the walker already is — which is clear, so "stay put" wins and the walker sticks
+   * to the wall. The surface itself is the only thing that knows the answer.
+   */
+  const diagonal: Volume = {
+    outline: polygon([
+      { x: 0, y: 0 },
+      { x: 5000, y: 5000 },
+      { x: 5000, y: 0 },
+    ]),
+    span: { bottom: 0, top: 2400 },
+  };
+
+  it('slides along a diagonal wall rather than sticking to it', () => {
+    const from = { x: 1000, y: 1600 };
+    const after = slide(from, { x: 400, y: 0 }, { bottom: 0, top: 1800 }, [diagonal]);
+
+    expect(after).not.toEqual(from);
+    // Along the surface, which means both axes move — the east the walker asked for,
+    // and the north that keeping off the wall costs.
+    expect(after.x).toBeGreaterThan(from.x);
+    expect(after.y).toBeGreaterThan(from.y);
+  });
+
+  it('does not let the slide push through the surface', () => {
+    const from = { x: 1000, y: 1600 };
+    const after = slide(from, { x: 400, y: 0 }, { bottom: 0, top: 1800 }, [diagonal]);
+
+    expect(isClear(after, { bottom: 0, top: 1800 }, [diagonal])).toBe(true);
+  });
+
+  it('still stops dead when the move is straight into the surface', () => {
+    // Nothing tangential is left to keep: the whole move is the component that has
+    // to go. A wall you walk squarely at is a wall you stop at.
+    const from = { x: 1000, y: 1600 };
+    const into = { x: 300, y: -300 };
+    expect(slide(from, into, { bottom: 0, top: 1800 }, [diagonal])).toEqual(from);
+  });
+
+  it('leaves a walker who is already inside something free to get out', () => {
+    // Unchanged, and asserted here because the contact normal is computed from the
+    // blocked candidate: a walker standing inside a wall has candidates that are all
+    // blocked, and freezing them there is worse than briefly being in a wall.
+    const inWall = { x: 3000, y: 1000 };
+    expect(slide(inWall, { x: 0, y: 500 }, { bottom: 0, top: 1800 }, [diagonal])).toEqual({
+      x: 3000,
+      y: 1500,
+    });
   });
 });
 

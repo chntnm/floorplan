@@ -28,15 +28,32 @@
  *
  * ## Sliding
  *
- * Blocked moves are retried on each axis separately: full, then x-only, then y-only.
- * That gives a clean slide along axis-aligned walls, which is most walls, and a
- * stickier one along diagonals — a proper resolver would push out along the contact
- * normal, and is not worth its bug surface here. Documented rather than hidden.
+ * A blocked move is retried along the surface it was blocked by: the component going
+ * into the contact normal is dropped and the rest is kept. On an axis-aligned wall
+ * that is exactly the old "try x, then try y" — the tangent of a north wall *is* the
+ * x axis — so the common case is unchanged. On a diagonal it is the case the axis
+ * retries could never answer, because moving on one axis alone is the move that was
+ * refused and moving on the other lands where the walker already stands.
+ *
+ * The axis retries are kept behind it. An inside corner has two normals and their
+ * average points out of the corner rather than along either wall, so the tangent
+ * there is a direction neither surface allows; falling back to one axis at a time is
+ * what still gets a walker along the wall they are actually pressed against.
  */
 
 import { circleIntersects, spansOverlap, type Span, type Volume } from './geometry/collision';
 import { containsPoint } from './geometry/polygon';
-import { toRadians, type Vec2 } from './geometry/vec';
+import {
+  closestPointOnSegment,
+  distanceToSegment,
+  dot,
+  length,
+  normalize,
+  scale,
+  sub,
+  toRadians,
+  type Vec2,
+} from './geometry/vec';
 import type { DocPoint3 } from './units';
 
 // ---------------------------------------------------------------------------
@@ -232,10 +249,54 @@ export function groundHeight(
 }
 
 /**
+ * Which way the surfaces touching `at` face, averaged, or null if nothing touches it.
+ *
+ * Averaged rather than nearest-wins because a walker in an inside corner is against
+ * two surfaces at once, and one of them alone would send them straight into the other.
+ * The average points out of the corner, which is a direction that will fail `isClear`
+ * — and failing is the right answer there, because it is what hands the move to the
+ * axis retries that can still slide along one of the two walls.
+ *
+ * A body already *inside* a blocker takes the direction from itself to the nearest
+ * edge instead, so the normal still points at open air rather than deeper in.
+ */
+function contactNormal(
+  at: Vec2,
+  span: Span,
+  blockers: readonly Volume[],
+  radiusMm: number,
+): Vec2 | null {
+  let sum: Vec2 = { x: 0, y: 0 };
+
+  for (const blocker of blockers) {
+    if (!spansOverlap(span, blocker.span)) continue;
+    if (!circleIntersects(blocker.outline, at, radiusMm)) continue;
+
+    const inside = containsPoint(blocker.outline, at);
+    const pts = blocker.outline.pts;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i]!;
+      const b = pts[(i + 1) % pts.length]!;
+      // Only the edges actually being touched. A long wall's far edge is part of the
+      // same polygon and points the opposite way; including it would cancel the
+      // normal out to nothing.
+      if (!inside && distanceToSegment(at, a, b) > radiusMm) continue;
+
+      const closest = closestPointOnSegment(at, a, b);
+      const away = inside ? sub(closest, at) : sub(at, closest);
+      if (length(away) < 1e-6) continue;
+      sum = { x: sum.x + normalize(away).x, y: sum.y + normalize(away).y };
+    }
+  }
+
+  return length(sum) < 1e-6 ? null : normalize(sum);
+}
+
+/**
  * Move as far as the world allows, sliding along whatever is in the way.
  *
- * Full move, then x-only, then y-only. Diagonal walls slide stickily; see the module
- * comment.
+ * Full move, then along the surface, then x-only, then y-only. See the module comment
+ * for why the axis retries survive the surface one.
  */
 export function slide(
   from: Vec2,
@@ -252,11 +313,27 @@ export function slide(
     return { x: from.x + delta.x, y: from.y + delta.y };
   }
 
-  const candidates: Vec2[] = [
-    { x: from.x + delta.x, y: from.y + delta.y },
-    { x: from.x + delta.x, y: from.y },
-    { x: from.x, y: from.y + delta.y },
-  ];
+  const full = { x: from.x + delta.x, y: from.y + delta.y };
+  if (isClear(full, span, blockers, radiusMm)) return full;
+
+  const candidates: Vec2[] = [];
+
+  // The normal is taken at the blocked position rather than at `from`, because `from`
+  // is clear by the check above and so touches nothing to take a normal from.
+  const normal = contactNormal(full, span, blockers, radiusMm);
+  if (normal) {
+    const into = dot(delta, normal);
+    // Only a move that goes *into* the surface has a component to lose. A move that
+    // is already leaving it was blocked by something else, and projecting would take
+    // away the escape.
+    if (into < 0) {
+      const along = sub(delta, scale(normal, into));
+      candidates.push({ x: from.x + along.x, y: from.y + along.y });
+    }
+  }
+
+  candidates.push({ x: from.x + delta.x, y: from.y }, { x: from.x, y: from.y + delta.y });
+
   for (const candidate of candidates) {
     if (isClear(candidate, span, blockers, radiusMm)) return candidate;
   }

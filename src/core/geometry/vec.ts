@@ -62,6 +62,24 @@ export function equals(a: Vec2, b: Vec2, tolerance = 0): boolean {
 }
 
 /**
+ * The point on a **segment** nearest to `p` — not on the infinite line, so the ends
+ * are the answer when the foot of the perpendicular falls beyond them.
+ *
+ * Split out from `distanceToSegment` because the walker needs the point and not only
+ * the distance: sliding along a surface means knowing which way that surface faces,
+ * and the direction from the nearest point to the body is exactly that.
+ */
+export function closestPointOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return a;
+
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/**
  * Perpendicular distance from a point to a **segment**, not to the infinite line.
  *
  * Lives here rather than in `wall.ts` because walls are not the only thing measured
@@ -69,13 +87,7 @@ export function equals(a: Vec2, b: Vec2, tolerance = 0): boolean {
  * and that must not have to import a wall to do it.
  */
 export function distanceToSegment(p: Vec2, a: Vec2, b: Vec2): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return distance(p, a);
-
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
-  return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
+  return distance(p, closestPointOnSegment(p, a, b));
 }
 
 export function toDegrees(radians: number): number {
