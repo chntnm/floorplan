@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { clickAt, dragBetween, selectTool } from './coords';
 import { disableSaveInPlace } from './save';
+import { clickSpaceCentre } from './space';
 
 /**
  * Multiple floors — PLAN.md §11.
@@ -233,9 +234,7 @@ test.describe('clicking through the stack in 3D', () => {
     await expect(page.getByTestId('space-view')).toBeVisible();
     await page.getByTestId('floors-all').click();
 
-    const canvas = page.locator('.space__canvas canvas');
-    const box = (await canvas.boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await clickSpaceCentre(page);
 
     await expect(page.getByTestId('wall-properties')).toBeVisible();
   });
