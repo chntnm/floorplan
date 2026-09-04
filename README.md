@@ -138,6 +138,7 @@ pnpm dev            # http://localhost:5190
 | `pnpm lint` | ESLint |
 | `pnpm test` | Vitest — 768 unit tests |
 | `pnpm test:watch` | Vitest in watch mode |
+| `pnpm bench` | Time the geometry passes at 500 placements — see PLAN.md §10.4 |
 | `pnpm e2e` | Playwright — 124 end-to-end tests, against a production build |
 | `pnpm e2e:install` | One-time Playwright browser install |
 | `pnpm media` | Redraw every picture in this README (needs `ffmpeg`) |

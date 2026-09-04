@@ -906,6 +906,53 @@ identical chairs are one draw call), frustum culling, static geometry merged per
 and only the active floor rendered by default with lower floors available as a dimmed
 underlay.
 
+**Measured: everything except the renderer.** `pnpm bench` runs `scene.bench.ts`, which
+puts 500 placements on a floor at three densities and times the passes they feed. It is
+not in CI, for the reason no timing should be: a benchmark that gates a merge fails on
+whatever else the machine was doing.
+
+Milliseconds per call, 500 placements, Node 24 on a Windows laptop, 2026-09-04. *Sparse*
+is a 1.1m pitch — a furnished floor with clearance around everything. *Touching* is
+520mm, where every item overlaps its neighbours and the validation panel has something
+to say about all of them. *Piled* is 120mm, which is not a plan anyone drew and is here
+to show where the cost comes from.
+
+| | sparse | touching | piled |
+|---|---|---|---|
+| `buildScene` | 0.10 | 0.10 | 0.11 |
+| `buildStack` | 0.13 | 0.13 | 0.14 |
+| `blockersOf` | 0.004 | 0.004 | 0.005 |
+| `findCollisions` | 0.37 | 5.1 | 188 |
+| `validateFloor` | 0.37 | 5.9 | 216 |
+| **`stepWalker`** | **0.011** | **0.027** | **0.028** |
+
+Three things fall out of that.
+
+`stepWalker` is the only row that runs inside a frame; everything above it runs once per
+edit, against a scene the cache in `ui/space/scene-cache.ts` keeps until the document
+changes. At 0.011–0.028ms against 500 blockers it uses well under a percent of the
+16.7ms budget, which means the CPU half of the target is not where the risk is. Whether
+500 placements hold 60fps is a question about draw calls, and this says nothing about it.
+
+Placement count is not the variable. **Colliding pairs** are: 17 pairs cost 0.37ms and
+17,315 pairs cost 216ms, on the same 500 placements. The broad phase is doing its job —
+the sparse case rejects almost everything on bounding boxes — and what is left is a
+polygon-clipping pass per surviving pair, which is the honest cost of reporting an
+overlap. A floor with 17,000 overlaps on it is a floor where every answer is "this does
+not fit", so the pathological case is one nobody reaches by planning a room.
+
+The 520mm row is the one to watch. 5.9ms per edit is inside a frame but not by much, and
+it is reached by a plausible document: 500 items packed against each other. If that
+becomes a real complaint the fix is a grid index in `findCollisions`, which the sweep
+already leaves room for, and not instancing — instancing is a renderer question and this
+row never reaches the renderer.
+
+**Still unmeasured: the renderer.** One mesh per solid, no instancing. The captures in
+`docs/media` are taken in headless Chromium on a software rasteriser, so a frame rate
+from them would be a number about SwiftShader wearing the clothes of a number about the
+application. The seam for instancing is unchanged — the scene model already groups by
+catalog item — and so is the fact that nobody has run it.
+
 ---
 
 ## 11. Multi-Room and Multi-Floor
