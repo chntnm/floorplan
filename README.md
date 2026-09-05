@@ -2,9 +2,9 @@
 
 Spatial planning for real rooms. Bring a floor plan — a PDF, an image, or nothing at
 all — trace it, build an inventory of the things you own, place them, and walk through
-the result in 3D. Phases 0–9 of [PLAN.md](./PLAN.md) are built: import and calibration,
-the plan editor, inventory and placement, the space view, door swing, clearance and
-circulation, room detection and floor stacking, save-in-place and crash recovery.
+the result in 3D. Import and calibration, the plan editor, inventory and placement, the
+space view, door swing, clearance and circulation, room detection and floor stacking,
+save-in-place and crash recovery.
 
 **One decision explains most of the rest of it.** Every object carries a real height and
 a real base elevation, and the geometry is three-dimensional everywhere rather than a
@@ -136,8 +136,9 @@ pnpm dev            # http://localhost:5190
 | `pnpm preview` | Serve the production build — no lookup endpoint, like a static deploy |
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm lint` | ESLint |
-| `pnpm test` | Vitest — 765 unit tests |
+| `pnpm test` | Vitest — 768 unit tests |
 | `pnpm test:watch` | Vitest in watch mode |
+| `pnpm bench` | Time the geometry passes at 500 placements — see PLAN.md §10.4 |
 | `pnpm e2e` | Playwright — 124 end-to-end tests, against a production build |
 | `pnpm e2e:install` | One-time Playwright browser install |
 | `pnpm media` | Redraw every picture in this README (needs `ffmpeg`) |
@@ -155,7 +156,8 @@ src/
 └── styles/        global CSS
 e2e/               Playwright specs
 media/             the capture script behind docs/media
-PLAN.md            architecture, decisions, and the phasing table
+PLAN.md            architecture, decisions, the phasing table, and what is
+                   deliberately out of scope for v1
 ```
 
 `src/core/` is free of React and of any renderer. The geometry engine is pure functions
@@ -177,37 +179,6 @@ three.
   rounding mid-gesture makes geometry jitter against the cursor.
 
 ---
-
-## What is not built, and what is not measured
-
-Read this before believing anything above is finished.
-
-**Not built, and not planned for v1.** Dragging a room boundary directly: rooms and their
-walls are separate entities and moving one without the other desynchronises them, so the
-gesture that does not exist is the one that would break. Move the walls and press Detect
-rooms instead. Windows do not open — a casement sash would swing like a door and is not
-implemented. Floors can only be added at the ends of the stack. A detected room is a
-simple ring, so an island of walls inside one does not punch a hole in it. PDF vector path
-extraction is v2: a PDF is rasterised and traced by hand.
-
-**Built, and known to be approximate.** The walkway probe reports the narrowest gap *at a
-sample*, not the true infimum — the medial-axis navmesh that would give the real answer is
-explicitly out of scope. Collision is resolved by retrying a move per axis rather than
-against a contact normal, so a walker slides stickily along a diagonal wall. The product
-lookup's confidence flag records whether any dimension was accepted exactly as scraped; it
-records nothing about whether the page was right. DNS rebinding between the endpoint's
-address check and its connect is open, because `fetch` will not pin a socket.
-
-**Not measured.** There are no performance numbers here, because none have been taken.
-PLAN.md §10.4 sets a target of 500 objects at 60fps; the space view currently builds one
-mesh per solid with no instancing, and nobody has run that test. The pictures on this page
-are captured in headless Chromium on a software rasteriser, so they demonstrate what the
-app draws and say nothing at all about how fast it draws it.
-
-**Synthetic.** The product-page fixtures the lookup parser is tested against are written
-by hand, not captured from real retailers, and the sample plan in the calibration
-screenshot is drawn by the capture script. Neither has been run against a real shop or a
-real estate agent's PDF.
 
 ## The pictures
 

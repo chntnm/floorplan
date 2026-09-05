@@ -24,13 +24,16 @@
  *     at the URL the user typed.
  *   - **A response size cap and a hard timeout**, so a hostile or merely enormous page
  *     cannot hold a function open or exhaust its memory.
- *
- * The residual hole is stated rather than papered over: between the DNS check and the
- * connection there is a window in which a record can change (DNS rebinding). Closing it
- * needs the socket to be pinned to the address that was checked, which `fetch` does not
- * expose. For a self-hosted planning tool with no internal network worth reaching, the
- * trade is deliberate.
+ *   - **The socket is pinned to the address that was checked.** A guard that resolves a
+ *     name and a transport that resolves it again leave a window between them in which
+ *     the record can change, which is the whole of DNS rebinding: the check sees a
+ *     public address and the connection lands on a private one. `fetch` exposes no way
+ *     to pin a socket, so where `node:https` is present the request goes through it
+ *     with a `lookup` that returns the addresses already validated.
  */
+
+import type * as NodeHttps from 'node:https';
+import type * as NodeStream from 'node:stream';
 
 import { parseProduct, type ProductDraft } from '../core/product';
 
@@ -159,12 +162,23 @@ export async function systemResolver(hostname: string): Promise<string[]> {
   return found.map((entry) => entry.address);
 }
 
-/** Resolve a hostname and refuse it if it points anywhere private. */
-async function assertPublicHost(hostname: string, resolve: Resolver | null): Promise<void> {
+/**
+ * Resolve a hostname, refuse it if it points anywhere private, and hand back the
+ * addresses the connection is allowed to use.
+ *
+ * Returning them rather than returning nothing is what turns a check into a guarantee:
+ * the caller connects to one of *these*, not to whatever the name resolves to a moment
+ * later. `null` means there is nothing to pin — a runtime with no resolver, where the
+ * literal checks are all there is.
+ */
+async function resolvePublicHost(
+  hostname: string,
+  resolve: Resolver | null,
+): Promise<string[] | null> {
   if (isPrivateAddress(hostname)) {
     throw new BlockedUrlError('That address is not a public web address.');
   }
-  if (!resolve) return;
+  if (!resolve) return null;
 
   let addresses: string[];
   try {
@@ -173,7 +187,7 @@ async function assertPublicHost(hostname: string, resolve: Resolver | null): Pro
     // A runtime with no `node:dns` at all: skip the step rather than refusing every
     // lookup. A hostname that genuinely will not resolve fails at the fetch instead.
     if (err instanceof Error && /Cannot find module|ERR_MODULE_NOT_FOUND/.test(err.message)) {
-      return;
+      return null;
     }
     throw new BlockedUrlError(`Could not resolve ${hostname}.`);
   }
@@ -183,6 +197,99 @@ async function assertPublicHost(hostname: string, resolve: Resolver | null): Pro
       throw new BlockedUrlError('That address resolves to a private network.');
     }
   }
+  return addresses.length > 0 ? addresses : null;
+}
+
+/** Which `dns.lookup` family a literal address belongs to. */
+function addressFamily(address: string): number {
+  return address.includes(':') ? 6 : 4;
+}
+
+/**
+ * `fetch`, with the socket pinned to addresses that have already been checked.
+ *
+ * The one gap the guards above cannot close on their own. `resolvePublicHost` looks the
+ * name up and `fetch` looks it up again when it connects, and a record that changes
+ * between the two is DNS rebinding — the check passes on a public address, the
+ * connection lands on `169.254.169.254`. There is no `fetch` option for this, so the
+ * request is made through `node:https` with a `lookup` that returns what was validated
+ * instead of asking the resolver a second time.
+ *
+ * TLS is untouched: the hostname still drives SNI and certificate validation, so this
+ * pins *where* the connection goes without changing *who* it has to prove it is. All of
+ * the resolved addresses are offered rather than only the first, so a host with one
+ * dead address still fails over the way it would have.
+ *
+ * Two cases fall back to `fetch`, and neither is a hole: a runtime with no `node:https`
+ * is the same runtime that had no `node:dns`, and a call with no addresses is that same
+ * runtime arriving here. Where there is nothing to pin there was never a resolution to
+ * disagree with.
+ */
+async function pinnedFetch(
+  target: string,
+  init: RequestInit,
+  pinned: string[] | null,
+): Promise<Response> {
+  if (!pinned || pinned.length === 0) return globalThis.fetch(target, init);
+
+  let request: typeof NodeHttps.request;
+  let Readable: typeof NodeStream.Readable;
+  try {
+    ({ request } = await import('node:https'));
+    ({ Readable } = await import('node:stream'));
+  } catch {
+    return globalThis.fetch(target, init);
+  }
+
+  const url = new URL(target);
+  const headers: Record<string, string> = {};
+  new Headers(init.headers).forEach((value, name) => {
+    headers[name] = value;
+  });
+  // Written last so a caller cannot ask for something this transport cannot read.
+  // `https.request` does not decompress and `fetch` does; a compressed body here would
+  // reach `parseProduct` as gzip, with no error to explain why the page had no title.
+  headers['accept-encoding'] = 'identity';
+
+  return await new Promise<Response>((settle, fail) => {
+    const outgoing = request(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: `${url.pathname}${url.search}`,
+        method: 'GET',
+        headers,
+        ...(init.signal ? { signal: init.signal } : {}),
+        lookup: (_hostname, options, done) => {
+          if (options.all) {
+            done(
+              null,
+              pinned.map((address) => ({ address, family: addressFamily(address) })),
+            );
+          } else {
+            done(null, pinned[0]!, addressFamily(pinned[0]!));
+          }
+        },
+      },
+      (incoming) => {
+        const status = incoming.statusCode ?? 502;
+        const received = new Headers();
+        for (const [name, value] of Object.entries(incoming.headers)) {
+          if (Array.isArray(value)) for (const one of value) received.append(name, one);
+          else if (value !== undefined) received.set(name, value);
+        }
+        // 204 and 304 are defined to carry no body, and `Response` refuses to be given
+        // one — a redirect chain through either would throw here rather than be read.
+        const empty = status === 204 || status === 304;
+        const body = empty
+          ? null
+          : (Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>);
+        settle(new Response(body, { status, headers: received }));
+      },
+    );
+    outgoing.on('error', fail);
+    outgoing.end();
+  });
 }
 
 /** Validate the shape of a URL. Throws `BlockedUrlError` with a message to show. */
@@ -221,10 +328,24 @@ export function parseTargetUrl(raw: unknown): URL {
   return url;
 }
 
-type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+/**
+ * What actually makes the request: `fetch`, widened by the addresses the socket is to
+ * be pinned to.
+ *
+ * The third argument is here so a test can see it. Pinning is the guard with no
+ * observable output — a correct implementation and one that quietly calls plain
+ * `fetch` return the same page — so the addresses are passed rather than captured, and
+ * a stub can assert that the ones the resolver validated are the ones the connection
+ * was handed. A two-argument stub is still assignable and simply ignores them.
+ */
+export type Transport = (
+  url: string,
+  init: RequestInit,
+  pinned: string[] | null,
+) => Promise<Response>;
 
 export type LookupDeps = {
-  fetch?: FetchLike;
+  fetch?: Transport;
   /** Pass `null` to skip the DNS check — for a runtime that has no resolver. */
   resolve?: Resolver | null;
 };
@@ -264,7 +385,7 @@ export async function lookupProduct(
   rawUrl: unknown,
   deps: LookupDeps = {},
 ): Promise<LookupResult> {
-  const fetchImpl = deps.fetch ?? ((url, init) => globalThis.fetch(url, init));
+  const transport: Transport = deps.fetch ?? pinnedFetch;
   const resolve = deps.resolve === undefined ? systemResolver : deps.resolve;
   let url: URL;
   try {
@@ -280,15 +401,21 @@ export async function lookupProduct(
     let response: Response | undefined;
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      await assertPublicHost(url.hostname, resolve);
+      // Checked *and* pinned: the addresses this returns are the only ones the
+      // connection below can reach, so the name cannot be re-pointed in between.
+      const pinned = await resolvePublicHost(url.hostname, resolve);
 
-      response = await fetchImpl(url.toString(), {
-        // Manual, so every hop is revalidated. `redirect: 'follow'` would let a
-        // retailer's shortlink land on a private address without this code seeing it.
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/xhtml+xml' },
-      });
+      response = await transport(
+        url.toString(),
+        {
+          // Manual, so every hop is revalidated. `redirect: 'follow'` would let a
+          // retailer's shortlink land on a private address without this code seeing it.
+          redirect: 'manual',
+          signal: controller.signal,
+          headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/xhtml+xml' },
+        },
+        pinned,
+      );
 
       if (response.status < 300 || response.status >= 400) break;
 

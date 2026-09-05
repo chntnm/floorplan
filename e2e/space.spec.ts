@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { clickAt, dragBetween, selectTool } from './coords';
 import { disableSaveInPlace } from './save';
+import { clickSpaceCentre } from './space';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -207,11 +208,9 @@ test.describe('the layer toggle', () => {
     await roomWithDoor(page);
     await page.getByRole('button', { name: 'Arrange furniture', exact: true }).click();
 
-    const canvas = page.locator('.space__canvas canvas');
-    const box = (await canvas.boundingBox())!;
     // The orbit view frames the whole room, so the middle of the canvas is a wall or
     // the floor either way — and neither may select while structure is locked.
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await clickSpaceCentre(page);
 
     await expect(page.getByTestId('wall-properties')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
@@ -220,9 +219,7 @@ test.describe('the layer toggle', () => {
   test('still selects a wall in 3D when structure is editable', async ({ page }) => {
     await roomWithDoor(page);
 
-    const canvas = page.locator('.space__canvas canvas');
-    const box = (await canvas.boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await clickSpaceCentre(page);
 
     // Something got selected — the click reaches the scene, so the test above is
     // asserting a real refusal rather than a raycast that never hit anything.
