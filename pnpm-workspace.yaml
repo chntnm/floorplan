@@ -2,3 +2,9 @@
 # field in package.json. esbuild is Vite's bundler and needs its postinstall.
 allowBuilds:
   esbuild: true
+  # Electron's postinstall downloads the platform binary. Without it `electron` is a
+  # package with no runtime in it and `pnpm desktop:dev` fails at the first line.
+  electron: true
+  # Squirrel.Windows, pulled in by electron-builder. The installer here is NSIS, so
+  # this one is never invoked and its postinstall is a download nothing reads.
+  electron-winstaller: false

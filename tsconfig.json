@@ -32,6 +32,7 @@
     "media",
     "vite.config.ts",
     "playwright.config.ts",
+    "playwright.desktop.config.ts",
     "playwright.media.config.ts",
     "eslint.config.js"
   ]

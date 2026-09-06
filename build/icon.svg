@@ -1,0 +1,23 @@
+<!--
+  The application icon: a small plan, with a door in it.
+
+  Three rooms rather than two, and none of them the same size, because a symmetrical
+  division reads as a letter H long before it reads as a floor plan. The gap in the
+  right-hand wall is the doorway — the one detail that says this is a plan of somewhere
+  you can walk, which is what the app is for.
+
+  Rendered to build/icon.png by `node build/icon.mjs`, which is what electron-builder
+  converts into the platform icons.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="104" fill="#17171a" />
+  <g fill="none" stroke="#4d9d86" stroke-width="30" stroke-linecap="butt" stroke-linejoin="miter">
+    <!-- The outer wall. -->
+    <rect x="104" y="104" width="304" height="304" />
+    <!-- The dividing wall, broken for a doorway near the bottom. -->
+    <path d="M 296 104 L 296 300" />
+    <path d="M 296 366 L 296 408" />
+    <!-- One more wall, splitting the left half unevenly. -->
+    <path d="M 104 274 L 296 274" />
+  </g>
+</svg>
