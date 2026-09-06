@@ -49,7 +49,11 @@ export default defineConfig({
   webServer: {
     command: `pnpm run build && pnpm run preview --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}`,
-    reuseExistingServer: true,
+    // Always start our own server, as the e2e config does. Reusing whatever is on the
+    // port would photograph a preview left over from an earlier build and commit it
+    // as the current application — and every assert here checks state, not pixels,
+    // so nothing would notice.
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });

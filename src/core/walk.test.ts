@@ -374,10 +374,32 @@ describe('sliding', () => {
 
   it('still stops dead when the move is straight into the surface', () => {
     // Nothing tangential is left to keep: the whole move is the component that has
-    // to go. A wall you walk squarely at is a wall you stop at.
-    const from = { x: 1000, y: 1600 };
-    const into = { x: 300, y: -300 };
+    // to go. A wall you walk squarely at is a wall you stop at — *exactly* where you
+    // were, not a few 1e-13mm off it.
+    //
+    // The move lands short of the line rather than on it. Standing on the line, no
+    // edge is at any distance at all and there is no normal to project against, so
+    // the axis retries would give the same answer for a different reason and the
+    // projection would go untested. And the start is chosen so that the projection
+    // does leave residue — from (1000, 1600) it happens to cancel to zero exactly,
+    // and this assertion would pass without the exact-stop rule it is here for.
+    const from = { x: 1000, y: 1523 };
+    const into = { x: 198, y: -198 };
     expect(slide(from, into, { bottom: 0, top: 1800 }, [diagonal])).toEqual(from);
+  });
+
+  it('finds the way out when a long step lands its centre inside the surface', () => {
+    // A running step on a slow frame is longer than the body radius, so the blocked
+    // position can be *inside* the polygon, where every edge counts as touched and
+    // their normals average to something that points along or into it. The nearest
+    // edge alone says where open air is — and the slide goes along the surface, not
+    // back the way it came.
+    const from = { x: 1000, y: 1600 };
+    const after = slide(from, { x: 500, y: -200 }, { bottom: 0, top: 1800 }, [diagonal]);
+
+    expect(after.x).toBeGreaterThan(from.x);
+    expect(after.y).toBeGreaterThan(from.y);
+    expect(isClear(after, { bottom: 0, top: 1800 }, [diagonal])).toBe(true);
   });
 
   it('leaves a walker who is already inside something free to get out', () => {

@@ -911,7 +911,7 @@ puts 500 placements on a floor at three densities and times the passes they feed
 not in CI, for the reason no timing should be: a benchmark that gates a merge fails on
 whatever else the machine was doing.
 
-Milliseconds per call, 500 placements, Node 24 on a Windows laptop, 2026-09-04. *Sparse*
+Milliseconds per call, 500 placements, Node 24 on a Windows laptop, 2026-09-05. *Sparse*
 is a 1.1m pitch — a furnished floor with clearance around everything. *Touching* is
 520mm, where every item overlaps its neighbours and the validation panel has something
 to say about all of them. *Piled* is 120mm, which is not a plan anyone drew and is here
@@ -924,15 +924,22 @@ to show where the cost comes from.
 | `blockersOf` | 0.004 | 0.004 | 0.005 |
 | `findCollisions` | 0.37 | 5.1 | 188 |
 | `validateFloor` | 0.37 | 5.9 | 216 |
-| **`stepWalker`** | **0.011** | **0.027** | **0.028** |
+| **`stepWalker`, clear** | **0.029** | **0.030** | **0.032** |
+| **`stepWalker`, blocked** | **0.045** | **0.046** | **0.049** |
 
 Three things fall out of that.
 
-`stepWalker` is the only row that runs inside a frame; everything above it runs once per
-edit, against a scene the cache in `ui/space/scene-cache.ts` keeps until the document
-changes. At 0.011–0.028ms against 500 blockers it uses well under a percent of the
-16.7ms budget, which means the CPU half of the target is not where the risk is. Whether
-500 placements hold 60fps is a question about draw calls, and this says nothing about it.
+`stepWalker` is the only pair of rows that runs inside a frame; everything above them
+runs once per edit, against a scene the cache in `ui/space/scene-cache.ts` keeps until
+the document changes. It is timed twice because a frame that touches nothing and a frame
+that is blocked do different work: the first is a bounding-box rejection per blocker,
+the second sweeps the blockers it is against for their normals and projects the move
+along them. At 0.03ms clear and 0.05ms blocked against 500 blockers, either uses well
+under a percent of the 16.7ms budget, which means the CPU half of the target is not where
+the risk is. Whether 500 placements hold 60fps is a question about draw calls, and this
+says nothing about it. (An earlier figure of 0.011–0.028ms was for a step that touched
+nothing — and at one density for a walker that had been stood inside a placement — which
+is why the blocked frame is now timed on its own and the bench checks its own geometry.)
 
 Placement count is not the variable. **Colliding pairs** are: 17 pairs cost 0.37ms and
 17,315 pairs cost 216ms, on the same 500 placements. The broad phase is doing its job —

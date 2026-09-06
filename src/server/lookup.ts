@@ -32,6 +32,7 @@
  *     with a `lookup` that returns the addresses already validated.
  */
 
+import type { IncomingMessage } from 'node:http';
 import type * as NodeHttps from 'node:https';
 import type * as NodeStream from 'node:stream';
 
@@ -205,6 +206,44 @@ function addressFamily(address: string): number {
   return address.includes(':') ? 6 : 4;
 }
 
+/** The statuses defined to carry no body. `Response` throws if handed one alongside. */
+const BODYLESS_STATUSES = new Set([101, 204, 205, 304]);
+
+/**
+ * A `Response` over what `node:https` received, within what the constructor accepts.
+ *
+ * It accepts a status of 200–599 and nothing else, and no body at all on the four
+ * statuses defined not to have one. A server is under no such constraint — a 205 with
+ * a body and a 600 are both things a real one sends — and either would throw. Out of
+ * range becomes 502, which is what the caller reports for a page that did not answer
+ * properly anyway. A bodyless status has its stream torn down here, because nothing
+ * will ever read it, and a stream nobody reads is a socket nobody closes.
+ *
+ * Exported for its test only: the transport around it needs a TLS server to reach.
+ */
+export function toResponse(
+  incoming: IncomingMessage,
+  Readable: typeof NodeStream.Readable,
+): Response {
+  const status = incoming.statusCode ?? 502;
+  const usable = status >= 200 && status <= 599 ? status : 502;
+
+  const received = new Headers();
+  for (const [name, value] of Object.entries(incoming.headers)) {
+    if (Array.isArray(value)) for (const one of value) received.append(name, one);
+    else if (value !== undefined) received.set(name, value);
+  }
+
+  if (BODYLESS_STATUSES.has(usable)) {
+    incoming.destroy();
+    return new Response(null, { status: usable, headers: received });
+  }
+  return new Response(Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>, {
+    status: usable,
+    headers: received,
+  });
+}
+
 /**
  * `fetch`, with the socket pinned to addresses that have already been checked.
  *
@@ -272,19 +311,14 @@ async function pinnedFetch(
         },
       },
       (incoming) => {
-        const status = incoming.statusCode ?? 502;
-        const received = new Headers();
-        for (const [name, value] of Object.entries(incoming.headers)) {
-          if (Array.isArray(value)) for (const one of value) received.append(name, one);
-          else if (value !== undefined) received.set(name, value);
+        try {
+          settle(toResponse(incoming, Readable));
+        } catch (err) {
+          // A throw in here has no promise to land in. Left alone it is an uncaught
+          // exception, which takes the dev server — or the function — down with it.
+          incoming.destroy();
+          fail(err);
         }
-        // 204 and 304 are defined to carry no body, and `Response` refuses to be given
-        // one — a redirect chain through either would throw here rather than be read.
-        const empty = status === 204 || status === 304;
-        const body = empty
-          ? null
-          : (Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>);
-        settle(new Response(body, { status, headers: received }));
       },
     );
     outgoing.on('error', fail);
@@ -349,6 +383,23 @@ export type LookupDeps = {
   /** Pass `null` to skip the DNS check — for a runtime that has no resolver. */
   resolve?: Resolver | null;
 };
+
+/**
+ * Drop a response without reading it.
+ *
+ * Under `fetch` an unread body is released when the response is collected. Under the
+ * pinned transport nothing collects it: a redirect or an error page that was never
+ * read keeps its socket open until the server closes it, which a hostile server never
+ * does — and in a serverless function that is the invocation held open until the
+ * platform's hard timeout, the exact thing the size cap and the timer exist to prevent.
+ */
+async function discard(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Already closed, errored or locked: nothing is holding a socket.
+  }
+}
 
 /** Read at most `MAX_RESPONSE_BYTES`, then stop — a cap that is not merely advisory. */
 async function readCapped(response: Response): Promise<string> {
@@ -419,6 +470,9 @@ export async function lookupProduct(
 
       if (response.status < 300 || response.status >= 400) break;
 
+      // A redirect's body is never read. See `discard`.
+      await discard(response);
+
       const location = response.headers.get('location');
       if (!location) break;
       url = new URL(location, url);
@@ -439,6 +493,7 @@ export async function lookupProduct(
       return { ok: false, status: 502, message: 'That page redirected too many times.' };
     }
     if (!response.ok) {
+      await discard(response);
       return {
         ok: false,
         status: 502,
@@ -448,6 +503,7 @@ export async function lookupProduct(
 
     const type = response.headers.get('content-type') ?? '';
     if (!/text\/html|application\/xhtml/i.test(type)) {
+      await discard(response);
       return { ok: false, status: 415, message: 'That URL is not a web page.' };
     }
 
@@ -455,7 +511,12 @@ export async function lookupProduct(
     return { ok: true, url: url.toString(), draft: parseProduct(html, url.toString()) };
   } catch (err) {
     if (err instanceof BlockedUrlError) return { ok: false, status: 400, message: err.message };
-    if (err instanceof Error && err.name === 'AbortError') {
+    // The signal is asked rather than the error, because the two transports report a
+    // timeout differently. `fetch` rejects with an `AbortError`; `node:https` tears
+    // the socket down, and a body still being read fails with an `aborted` ECONNRESET
+    // instead — which is not a page that could not be reached, but one that answered
+    // and then took too long to finish.
+    if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
       return { ok: false, status: 504, message: 'That page took too long to answer.' };
     }
     return { ok: false, status: 502, message: 'Could not reach that page.' };
