@@ -120,6 +120,56 @@ stores the *route*, not the number, so it re-answers as furniture moves.
 The validation panel groups by what you would do about a problem rather than by which
 enum the issue came from.
 
+## The desktop build
+
+The same app, in a window, as an installer or a single portable `.exe`:
+
+```bash
+pnpm desktop         # dev server + an Electron window on it
+pnpm desktop:dist    # release/floorplan-0.1.0-setup.exe and -portable.exe
+```
+
+**The renderer is the web build, unchanged.** There is no desktop branch inside the app
+and no `window.electron` check anywhere in `src/` — the shell in `desktop/` arranges
+things around a bundle it does not modify. That is what keeps one verification pass
+honest for both.
+
+Arranging it takes one decision. The window loads `app://floorplan/`, a custom scheme
+registered `standard` and `secure`, rather than `file://` — because a `file://` page has
+an opaque origin, and this app is built on three things that need a real one:
+`showSaveFilePicker` (secure context only, and without it Ctrl+S stops saving in place
+and starts downloading), IndexedDB (which Chromium refuses on an opaque origin, and
+where the autosave behind crash recovery lives), and a relative `fetch` to
+`/api/product-lookup`. Registering the scheme restores all three at once, and the Vite
+build's absolute `/assets/…` paths resolve untouched.
+
+Two things the desktop gets that a static deployment does not:
+
+- **URL import works.** The product-lookup endpoint has no serverless function to live
+  in here, so the main process serves the same `handleProductLookup` the Vite middleware
+  and the deployed function call. Every guard in `src/server/lookup.ts` comes with it,
+  which is what makes running it on your own machine sound rather than convenient — a
+  hostile URL still cannot reach your loopback or your LAN, and `e2e/desktop.spec.ts`
+  asserts exactly that.
+- **Closing asks.** The window checks for unsaved work before it goes. Saying "close
+  anyway" is safe: the autosave survives and the recovery banner offers it back, the
+  same path a crash takes.
+
+The menu is deliberately thin. The renderer already owns Ctrl+S, Ctrl+Z and every bare
+letter, and a menu accelerator is handled before the page sees it — so the shell binds
+nothing the app binds, and New, Open, Save and Import stay where they are, in the app's
+own top bar.
+
+`pnpm e2e:desktop` drives the real Electron window: the origin, the policy, the pdfjs
+worker, the endpoint and its guards. It is kept out of CI, which has no Electron binary
+and no display. Point it at an installed build with
+`FLOORPLAN_APP=release/win-unpacked/floorplan.exe`, which tests the `app.asar` read path
+the loose `dist/` never exercises.
+
+Windows targets only, and unsigned: SmartScreen will warn on first run until the
+installer is code-signed. macOS and Linux artefacts have to be built and signed on those
+platforms, so there are no target blocks here claiming otherwise.
+
 ---
 
 ## Quick start
@@ -136,11 +186,16 @@ pnpm dev            # http://localhost:5190
 | `pnpm preview` | Serve the production build — no lookup endpoint, like a static deploy |
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm lint` | ESLint |
-| `pnpm test` | Vitest — 768 unit tests |
+| `pnpm test` | Vitest — 782 unit tests |
 | `pnpm test:watch` | Vitest in watch mode |
-| `pnpm bench` | Time the geometry passes at 500 placements — see PLAN.md §10.4 |
+| `pnpm bench` | Time the geometry passes at 500 placements |
 | `pnpm e2e` | Playwright — 124 end-to-end tests, against a production build |
 | `pnpm e2e:install` | One-time Playwright browser install |
+| `pnpm e2e:desktop` | Playwright — 9 tests, against the real Electron window |
+| `pnpm desktop` | Dev server with an Electron window on it |
+| `pnpm desktop:build` | Typecheck and build both halves — the app and the shell |
+| `pnpm desktop:pack` | Package to `release/win-unpacked/`, no installer |
+| `pnpm desktop:dist` | Build the NSIS installer and the portable `.exe` |
 | `pnpm media` | Redraw every picture in this README (needs `ffmpeg`) |
 
 ## Layout
@@ -154,10 +209,10 @@ src/
 │   ├── plan/      Konva stage and its layers
 │   └── space/     three.js scene, camera rig, walk loop
 └── styles/        global CSS
+desktop/           the Electron shell — window, custom scheme, menu, build scripts
+build/             the app icon, and the script that renders it
 e2e/               Playwright specs
 media/             the capture script behind docs/media
-PLAN.md            architecture, decisions, the phasing table, and what is
-                   deliberately out of scope for v1
 ```
 
 `src/core/` is free of React and of any renderer. The geometry engine is pure functions

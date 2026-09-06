@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // The main process is Node, not a browser, and it is emitted as CommonJS by
+    // esbuild — so `__dirname` exists and the DOM does not. The root config's `lib`
+    // includes DOM for the renderer's sake; leaving it in here would let a typo like
+    // `document.title` compile in a process that has no document.
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "Preserve",
+    "moduleResolution": "bundler"
+  },
+  "include": ["."]
+}

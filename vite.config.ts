@@ -61,6 +61,15 @@ export default defineConfig({
 
   server: {
     port: 5190,
+    // Build output is not source. Watching it is useless — nothing here imports it —
+    // and on Windows it is actively harmful: the watcher holds a handle on every
+    // directory under the project root, and electron-builder packages by extracting
+    // Electron into `release/win-unpacked.tmp` and *renaming* it, which fails with
+    // EPERM against an open handle. Without this, `pnpm desktop` and `pnpm
+    // desktop:dist` cannot both run in one session.
+    watch: {
+      ignored: ['**/release/**', '**/dist-electron/**'],
+    },
   },
 
   test: {

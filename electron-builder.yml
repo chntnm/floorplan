@@ -1,0 +1,50 @@
+# What electron-builder packs, and what it leaves out.
+#
+# `files` is an allowlist of three entries and no `node_modules`. The main process is
+# bundled into one file by `desktop/build.mjs` and the renderer is bundled by Vite, so
+# nothing in the installed app resolves a module at runtime — which sidesteps the whole
+# question of how a pnpm store's symlinks should be flattened into an asar, and keeps
+# the installer to the app plus Electron.
+#
+# Windows targets only. macOS and Linux artefacts have to be produced on those
+# platforms (and signed with their own identities); adding target blocks that nobody
+# has run would be a claim this repo cannot back.
+
+appId: com.chntnm.floorplan
+productName: floorplan
+copyright: Copyright © 2026 Chintan Mehta
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+
+asar: true
+
+win:
+  # `nsis` is the installer; `portable` is a single .exe that runs from a USB stick and
+  # writes nothing but its own data directory. Both come out of one build.
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  # Per-user by default, so installing needs no administrator: this app writes documents
+  # the user chooses and has nothing to put in Program Files that matters.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: floorplan
+  artifactName: floorplan-${version}-setup.exe
+
+portable:
+  artifactName: floorplan-${version}-portable.exe

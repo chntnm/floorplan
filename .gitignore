@@ -1,6 +1,9 @@
 node_modules/
 dist/
 dist-ssr/
+# The bundled Electron main process, and the installers electron-builder writes.
+dist-electron/
+release/
 coverage/
 playwright-report/
 test-results/
@@ -17,6 +20,10 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# The design document. Kept beside the repository rather than in it: it is a working
+# record of decisions and phasing, not something a clone needs to build or run.
+PLAN.md
 
 # Working documents produced by the app itself
 *.space

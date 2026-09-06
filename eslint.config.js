@@ -5,7 +5,16 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
-    ignores: ['dist', 'node_modules', 'playwright-report', 'test-results', 'coverage'],
+    ignores: [
+      'dist',
+      // Build output: the bundled main process, and what electron-builder packs.
+      'dist-electron',
+      'release',
+      'node_modules',
+      'playwright-report',
+      'test-results',
+      'coverage',
+    ],
   },
 
   js.configs.recommended,
