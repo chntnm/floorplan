@@ -45,7 +45,6 @@ import { circleIntersects, spansOverlap, type Span, type Volume } from './geomet
 import { containsPoint } from './geometry/polygon';
 import {
   closestPointOnSegment,
-  distanceToSegment,
   dot,
   length,
   normalize,
@@ -249,7 +248,29 @@ export function groundHeight(
 }
 
 /**
- * Which way the surfaces touching `at` face, averaged, or null if nothing touches it.
+ * Every blocker a body of `span` centred at `at` is touching. Empty means clear.
+ *
+ * `isClear` stops at the first hit; this collects them, for the one caller that goes
+ * on to ask which way they face and should not have to sweep the list a second time
+ * to find out.
+ */
+function contacts(
+  at: Vec2,
+  span: Span,
+  blockers: readonly Volume[],
+  radiusMm: number,
+): Volume[] {
+  const touching: Volume[] = [];
+  for (const blocker of blockers) {
+    if (!spansOverlap(span, blocker.span)) continue;
+    if (circleIntersects(blocker.outline, at, radiusMm)) touching.push(blocker);
+  }
+  return touching;
+}
+
+/**
+ * Which way the surfaces `touching` a body centred at `at` face, averaged, or null if
+ * none of them can say.
  *
  * Averaged rather than nearest-wins because a walker in an inside corner is against
  * two surfaces at once, and one of them alone would send them straight into the other.
@@ -257,35 +278,41 @@ export function groundHeight(
  * — and failing is the right answer there, because it is what hands the move to the
  * axis retries that can still slide along one of the two walls.
  *
- * A body already *inside* a blocker takes the direction from itself to the nearest
- * edge instead, so the normal still points at open air rather than deeper in.
+ * A body whose centre is *inside* a blocker — a running step on a slow frame is longer
+ * than the body radius, and can land one there — takes the direction to that
+ * blocker's nearest edge instead. From inside every edge counts as touched, and for a
+ * rectangle, which is every wall and most of the furniture, their normals cancel to
+ * exactly nothing. The nearest edge alone is the way out.
  */
-function contactNormal(
-  at: Vec2,
-  span: Span,
-  blockers: readonly Volume[],
-  radiusMm: number,
-): Vec2 | null {
+function contactNormal(at: Vec2, touching: readonly Volume[], radiusMm: number): Vec2 | null {
   let sum: Vec2 = { x: 0, y: 0 };
 
-  for (const blocker of blockers) {
-    if (!spansOverlap(span, blocker.span)) continue;
-    if (!circleIntersects(blocker.outline, at, radiusMm)) continue;
-
-    const inside = containsPoint(blocker.outline, at);
+  for (const blocker of touching) {
     const pts = blocker.outline.pts;
+
+    if (containsPoint(blocker.outline, at)) {
+      let out: Vec2 | null = null;
+      let nearest = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const away = sub(closestPointOnSegment(at, pts[i]!, pts[(i + 1) % pts.length]!), at);
+        const d = length(away);
+        if (d < nearest) {
+          nearest = d;
+          out = away;
+        }
+      }
+      if (out && nearest > 1e-6) sum = { x: sum.x + out.x / nearest, y: sum.y + out.y / nearest };
+      continue;
+    }
+
     for (let i = 0; i < pts.length; i++) {
-      const a = pts[i]!;
-      const b = pts[(i + 1) % pts.length]!;
       // Only the edges actually being touched. A long wall's far edge is part of the
       // same polygon and points the opposite way; including it would cancel the
       // normal out to nothing.
-      if (!inside && distanceToSegment(at, a, b) > radiusMm) continue;
-
-      const closest = closestPointOnSegment(at, a, b);
-      const away = inside ? sub(closest, at) : sub(at, closest);
-      if (length(away) < 1e-6) continue;
-      sum = { x: sum.x + normalize(away).x, y: sum.y + normalize(away).y };
+      const away = sub(at, closestPointOnSegment(at, pts[i]!, pts[(i + 1) % pts.length]!));
+      const d = length(away);
+      if (d > radiusMm || d < 1e-6) continue;
+      sum = { x: sum.x + away.x / d, y: sum.y + away.y / d };
     }
   }
 
@@ -314,13 +341,14 @@ export function slide(
   }
 
   const full = { x: from.x + delta.x, y: from.y + delta.y };
-  if (isClear(full, span, blockers, radiusMm)) return full;
+  const touching = contacts(full, span, blockers, radiusMm);
+  if (touching.length === 0) return full;
 
   const candidates: Vec2[] = [];
 
   // The normal is taken at the blocked position rather than at `from`, because `from`
   // is clear by the check above and so touches nothing to take a normal from.
-  const normal = contactNormal(full, span, blockers, radiusMm);
+  const normal = contactNormal(full, touching, radiusMm);
   if (normal) {
     const into = dot(delta, normal);
     // Only a move that goes *into* the surface has a component to lose. A move that
@@ -328,7 +356,12 @@ export function slide(
     // away the escape.
     if (into < 0) {
       const along = sub(delta, scale(normal, into));
-      candidates.push({ x: from.x + along.x, y: from.y + along.y });
+      // A move squarely into the surface has nothing left once its normal component
+      // goes. What floating point leaves of it — a few 1e-13mm — would still be a new
+      // position every frame, so it is `from` itself, exactly.
+      candidates.push(
+        length(along) < 1e-6 ? from : { x: from.x + along.x, y: from.y + along.y },
+      );
     }
   }
 

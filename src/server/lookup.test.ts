@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { Readable } from 'node:stream';
+import type { IncomingMessage } from 'node:http';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BlockedUrlError,
   MAX_RESPONSE_BYTES,
+  REQUEST_TIMEOUT_MS,
   USER_AGENT,
   isPrivateAddress,
   lookupProduct,
   parseTargetUrl,
+  toResponse,
   type LookupDeps,
 } from './lookup';
 
@@ -396,11 +400,120 @@ describe('what comes back', () => {
     expect(result).toMatchObject({ ok: false, status: 504 });
   });
 
+  it('says a page took too long when the timeout lands mid-body', async () => {
+    // The pinned transport does not reject with an `AbortError`. Node tears the socket
+    // down, and a body still being read fails with an `aborted` ECONNRESET instead —
+    // the same shape as a server that hung up, which it is not. The page answered and
+    // then stalled, and the caller should hear "too long", not "could not reach".
+    vi.useFakeTimers();
+    try {
+      const pending = lookupProduct(
+        'https://shop.example.com/p',
+        deps({
+          fetch: (_url, init) => {
+            const body = new ReadableStream<Uint8Array>({
+              start(controller) {
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }));
+                });
+              },
+            });
+            return Promise.resolve(
+              new Response(body, { headers: { 'content-type': 'text/html' } }),
+            );
+          },
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      expect(await pending).toMatchObject({ ok: false, status: 504 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops the body of a response it is not going to read', async () => {
+    // A redirect, an error page and a PDF are each answered without reading the body,
+    // and under the pinned transport a body nobody reads is a socket nobody closes.
+    // Cancelling is what releases it, so cancelling is what is asserted.
+    const unread = (status: number, headers: Record<string, string>) => {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode('x'.repeat(1000)));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return { response: new Response(body, { status, headers }), cancelled: () => cancelled };
+    };
+
+    const redirect = unread(302, { location: 'https://shop.example.com/p/sofa' });
+    const redirected = await lookupProduct(
+      'https://shop.example.com/p',
+      deps({
+        fetch: (url) =>
+          Promise.resolve(url === 'https://shop.example.com/p' ? redirect.response : html()),
+      }),
+    );
+    expect(redirected.ok).toBe(true);
+    expect(redirect.cancelled()).toBe(true);
+
+    const missing = unread(404, { 'content-type': 'text/html' });
+    await lookupProduct('https://shop.example.com/p', deps({ fetch: () => Promise.resolve(missing.response) }));
+    expect(missing.cancelled()).toBe(true);
+
+    const pdf = unread(200, { 'content-type': 'application/pdf' });
+    await lookupProduct('https://shop.example.com/p', deps({ fetch: () => Promise.resolve(pdf.response) }));
+    expect(pdf.cancelled()).toBe(true);
+  });
+
   it('says it could not reach a page rather than throwing', async () => {
     const result = await lookupProduct(
       'https://shop.example.com/p',
       deps({ fetch: () => Promise.reject(new Error('ECONNREFUSED')) }),
     );
     expect(result).toMatchObject({ ok: false, status: 502 });
+  });
+});
+
+describe('what node:https received, as a Response', () => {
+  /**
+   * `Response` accepts a status of 200–599 and refuses a body on 101, 204, 205 and
+   * 304. A server is bound by neither, and the constructor throwing inside a socket
+   * callback is not an error the caller sees — it is the process going down.
+   */
+  function incoming(statusCode: number, body = '<html></html>', headers = {}): IncomingMessage {
+    return Object.assign(Readable.from([Buffer.from(body)]), {
+      statusCode,
+      headers: { 'content-type': 'text/html', ...headers },
+    }) as unknown as IncomingMessage;
+  }
+
+  it('passes an ordinary page through, body and all', async () => {
+    const response = toResponse(incoming(200, '<title>Thing</title>'), Readable);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/html');
+    expect(await response.text()).toBe('<title>Thing</title>');
+  });
+
+  it('does not throw on a bodyless status that arrived with a body', () => {
+    // A 205 with an HTML body is malformed, and it is also something a server sends.
+    for (const status of [204, 205, 304]) {
+      const response = toResponse(incoming(status), Readable);
+      expect(response.status, String(status)).toBe(status);
+      expect(response.body, String(status)).toBeNull();
+    }
+  });
+
+  it('reports a status outside what a Response can carry as a bad gateway', () => {
+    for (const status of [600, 999, 199]) {
+      expect(toResponse(incoming(status), Readable).status, String(status)).toBe(502);
+    }
+  });
+
+  it('keeps every value of a repeated header', () => {
+    const response = toResponse(incoming(200, '', { 'set-cookie': ['a=1', 'b=2'] }), Readable);
+    expect(response.headers.getSetCookie()).toEqual(['a=1', 'b=2']);
   });
 });

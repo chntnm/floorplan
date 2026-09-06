@@ -1,11 +1,20 @@
 import { bench, describe } from 'vitest';
 import { createCatalogItem } from './catalog';
-import { findCollisions } from './geometry/collision';
+import { findCollisions, type Volume } from './geometry/collision';
 import { createDocument, type Floor, type SpaceDocument } from './document';
 import { blockersOf, buildScene, buildStack } from './scene';
 import { commitRoomRect } from './tools';
 import { validateFloor } from './validation';
-import { NO_INPUT, createWalker, stepWalker } from './walk';
+import {
+  NO_INPUT,
+  WALK_SPEED_MMS,
+  bodySpan,
+  createWalker,
+  forwardVector,
+  isClear,
+  stepWalker,
+  type Walker,
+} from './walk';
 
 /**
  * What PLAN.md §10.4's target can honestly be checked against without a GPU.
@@ -18,7 +27,10 @@ import { NO_INPUT, createWalker, stepWalker } from './walk';
  * What *is* measurable is everything the renderer is handed, and one thing that runs
  * inside the frame. `buildScene` and `validateFloor` run once per edit;
  * `stepWalker` runs sixty times a second against the cached blocker list, so it is
- * the only figure here that comes out of the 16.7ms budget.
+ * the only figure here that comes out of the 16.7ms budget. It is timed twice, because
+ * a frame that touches nothing and a frame that is blocked do different work: the
+ * first is a bounding-box rejection per blocker, the second sweeps the blockers again
+ * for the surfaces it is against and projects the move along them.
  *
  * Three densities, because placement count turns out not to be the variable that
  * matters — the number of *overlapping pairs* is, and those are two very different
@@ -77,13 +89,41 @@ function floorOf(pitchMm: number): { doc: SpaceDocument; floor: Floor } {
   return { doc, floor };
 }
 
+/**
+ * Check that a walker is standing clear and that one frame's stride ahead is what the
+ * bench says it is. A bench that times the wrong thing is worse than none — the first
+ * version of this file stood its walker inside a placement at one pitch and in open
+ * floor at the others, and the blocked frame it claimed to measure never happened.
+ */
+function assertStride(walker: Walker, blockers: readonly Volume[], blocked: boolean) {
+  const span = bodySpan(walker);
+  const { x, y } = walker.position;
+  if (!isClear(walker.position, span, blockers)) {
+    throw new Error(`the walker at ${x},${y} is standing inside something`);
+  }
+  const f = forwardVector(walker.heading);
+  const stride = WALK_SPEED_MMS / 60;
+  const ahead = { x: x + f.x * stride, y: y + f.y * stride };
+  if (isClear(ahead, span, blockers) === blocked) {
+    throw new Error(`the step from ${x},${y} should be ${blocked ? 'blocked' : 'clear'}`);
+  }
+}
+
 for (const [label, pitchMm] of Object.entries(PITCHES)) {
   describe(`${COUNT} placements, ${label}`, () => {
     const { doc, floor } = floorOf(pitchMm);
     const scene = buildScene(doc, floor);
     const blockers = blockersOf(scene);
-    const walker = createWalker({ x: 20000, y: 16000 }, 45);
     const world = { blockers, mode: 'walk' as const };
+
+    // Open floor in the far corner, beyond the grid at every pitch.
+    const clear = createWalker({ x: 32000, y: 28000 }, 45);
+    // Ten millimetres clear of the first row's face and a stride short of touching
+    // it, walking south-east — into the row, with an east component for the slide to
+    // keep, which is the whole of the blocked path.
+    const blocked = createWalker({ x: 900, y: 390 }, 135);
+    assertStride(clear, blockers, false);
+    assertStride(blocked, blockers, true);
 
     bench('buildScene', () => {
       buildScene(doc, floor);
@@ -106,8 +146,12 @@ for (const [label, pitchMm] of Object.entries(PITCHES)) {
     });
 
     // The frame. Everything above is per edit.
-    bench('stepWalker', () => {
-      stepWalker(walker, { ...NO_INPUT, forward: 1 }, 1 / 60, world);
+    bench('stepWalker, clear', () => {
+      stepWalker(clear, { ...NO_INPUT, forward: 1 }, 1 / 60, world);
+    });
+
+    bench('stepWalker, blocked', () => {
+      stepWalker(blocked, { ...NO_INPUT, forward: 1 }, 1 / 60, world);
     });
   });
 }

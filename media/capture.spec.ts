@@ -66,9 +66,10 @@ async function nameRoom(page: Page, at: { x: number; y: number }, name: string) 
  * T-junctions where the partition meets the shell.
  *
  * The interior door sits on y = 3000 on purpose. The walker seeds at the centre of
- * the largest room facing east, so that line is the one along which a scripted
- * clip can hold one key and end up in the next room — and the layout keeps it
- * clear of everything but the rug, which is 10mm tall and meant to be walked over.
+ * the largest room facing north, and the clip's first beat turns it 90° to face
+ * east — so that line is the one along which holding one key ends up in the next
+ * room, and the layout keeps it clear of everything but the rug, which is 10mm tall
+ * and meant to be walked over.
  */
 async function apartment(page: Page) {
   const stage = page.getByTestId('plan-stage');
